@@ -1,6 +1,6 @@
 
 CC=gcc
-CFLAGS=-O2 -std=c11 -Wall
+CFLAGS=-O2 -std=c11 -Wall -D_GNU_SOURCE
 LDFLAGS=-lrdmacm -libverbs
 
 SRC_DIR=src
