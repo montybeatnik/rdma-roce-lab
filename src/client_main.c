@@ -1,0 +1,69 @@
+
+#define _GNU_SOURCE
+#include <stdio.h>
+#include <string.h>
+#include "common.h"
+#include "rdma_ctx.h"
+#include "rdma_cm_helpers.h"
+#include "rdma_builders.h"
+#include "rdma_mem.h"
+#include "rdma_ops.h"
+
+#define BUF_SZ 4096
+
+int main(int argc, char **argv) {
+  if (argc < 3) {
+    fprintf(stderr, "Usage: %s <server-ip> <port>\n", argv[0]);
+    return 1;
+  }
+  const char *ip = argv[1];
+  const char *port = argv[2];
+
+  rdma_ctx c = {0};
+  LOG("Create CM channel + ID + connect");
+  cm_create_channel_and_id(&c);
+  cm_client_connect(&c, ip, port);
+
+  struct rdma_cm_event *ev;
+  CHECK(cm_wait_event(&c, RDMA_CM_EVENT_ESTABLISHED, &ev), "ESTABLISHED");
+  struct remote_buf_info info = {0};
+  if (ev->param.conn.private_data && ev->param.conn.private_data_len >= sizeof(info))
+      memcpy(&info, ev->param.conn.private_data, sizeof(info));
+  else { fprintf(stderr, "No private_data\n"); return 2; }
+  rdma_ack_cm_event(ev);
+  c.remote_addr = ntohll_u64(info.addr);
+  c.remote_rkey = ntohl(info.rkey);
+  LOG("Got remote addr=%#lx rkey=0x%x", (unsigned long)c.remote_addr, c.remote_rkey);
+
+  LOG("Build PD/CQ/QP");
+  build_pd_cq_qp(&c, IBV_QPT_RC, 64, 32, 32, 1);
+
+  LOG("Register local tx/rx");
+  alloc_and_reg(&c, &c.buf_tx, &c.mr_tx, BUF_SZ, IBV_ACCESS_LOCAL_WRITE);
+  alloc_and_reg(&c, &c.buf_rx, &c.mr_rx, BUF_SZ, IBV_ACCESS_LOCAL_WRITE);
+  strcpy((char*)c.buf_tx, "client-wrote-this");
+
+  LOG("Post RDMA_WRITE");
+  CHECK(post_write(c.qp, c.mr_tx, c.buf_tx, c.remote_addr, c.remote_rkey,
+                   strlen((char*)c.buf_tx)+1, 1, 1), "post_write");
+  struct ibv_wc wc;
+  CHECK(poll_one(c.cq, &wc), "poll write");
+  LOG("WRITE complete");
+
+  LOG("Post RDMA_READ");
+  CHECK(post_read(c.qp, c.mr_rx, c.buf_rx, c.remote_addr, c.remote_rkey,
+                  BUF_SZ, 2, 1), "post_read");
+  CHECK(poll_one(c.cq, &wc), "poll read");
+  LOG("READ complete: '%s'", (char*)c.buf_rx);
+
+  rdma_disconnect(c.id);
+
+  mem_free_all(&c);
+  if (c.qp) rdma_destroy_qp(c.id);
+  if (c.cq) ibv_destroy_cq(c.cq);
+  if (c.pd) ibv_dealloc_pd(c.pd);
+  if (c.id) rdma_destroy_id(c.id);
+  if (c.ec) rdma_destroy_event_channel(c.ec);
+  LOG("Done");
+  return 0;
+}
