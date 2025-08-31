@@ -25,17 +25,21 @@ int main(int argc, char **argv)
   cm_create_channel_and_id(&c);
   cm_client_connect(&c, ip, port);
 
-  struct rdma_cm_event *ev;
-  CHECK(cm_wait_connected(&c), "ESTABLISHED");
+  struct rdma_conn_param connp = {0};
+  CHECK(cm_wait_connected(&c, &connp), "ESTABLISHED");
+
+  // Extract private_data safely into a local struct
   struct remote_buf_info info = {0};
-  if (ev->param.conn.private_data && ev->param.conn.private_data_len >= sizeof(info))
-    memcpy(&info, ev->param.conn.private_data, sizeof(info));
+  if (connp.private_data && connp.private_data_len >= sizeof(info))
+  {
+    memcpy(&info, connp.private_data, sizeof(info));
+  }
   else
   {
-    fprintf(stderr, "No private_data\n");
+    fprintf(stderr, "No or short private_data\n");
     return 2;
   }
-  rdma_ack_cm_event(ev);
+
   c.remote_addr = ntohll_u64(info.addr);
   c.remote_rkey = ntohl(info.rkey);
   LOG("Got remote addr=%#lx rkey=0x%x", (unsigned long)c.remote_addr, c.remote_rkey);

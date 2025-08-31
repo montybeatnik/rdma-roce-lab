@@ -37,21 +37,42 @@ int cm_wait_event(rdma_ctx *c, enum rdma_cm_event_type want, struct rdma_cm_even
   return 0;
 }
 
-int cm_wait_connected(rdma_ctx *c)
+int cm_wait_connected(rdma_ctx *c, struct rdma_conn_param *out_conn_param)
 {
-  struct rdma_cm_event *ev;
-  if (cm_wait_event(c, RDMA_CM_EVENT_ESTABLISHED, &ev) == 0)
+  struct rdma_cm_event *ev = NULL;
+
+  // Try ESTABLISHED directly
+  if (rdma_get_cm_event(c->ec, &ev) == 0)
   {
+    if (ev->event == RDMA_CM_EVENT_ESTABLISHED)
+    {
+      if (out_conn_param)
+        *out_conn_param = ev->param.conn; // copy before ack
+      rdma_ack_cm_event(ev);
+      return 0;
+    }
+    // Not ESTABLISHED; remember what we saw and ack it
+    int got = ev->event;
+    int status = ev->status;
     rdma_ack_cm_event(ev);
-    return 0;
+
+    // If we got CONNECT_RESPONSE, wait one more for ESTABLISHED
+    if (got == RDMA_CM_EVENT_CONNECT_RESPONSE)
+    {
+      if (rdma_get_cm_event(c->ec, &ev) == 0 && ev->event == RDMA_CM_EVENT_ESTABLISHED)
+      {
+        if (out_conn_param)
+          *out_conn_param = ev->param.conn;
+        rdma_ack_cm_event(ev);
+        return 0;
+      }
+    }
+
+    // Unexpected sequence
+    LOG("Unexpected CM event while waiting for ESTABLISHED: got=%d status=%d", got, status);
+    return -1;
   }
-  if (cm_wait_event(c, RDMA_CM_EVENT_CONNECT_RESPONSE, &ev) == 0)
-  {
-    rdma_ack_cm_event(ev);
-    CHECK(cm_wait_event(c, RDMA_CM_EVENT_ESTABLISHED, &ev), "ESTABLISHED");
-    rdma_ack_cm_event(ev);
-    return 0;
-  }
+  perror("rdma_get_cm_event");
   return -1;
 }
 
