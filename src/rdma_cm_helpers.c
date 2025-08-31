@@ -84,7 +84,7 @@ int cm_server_accept_with_priv(rdma_ctx *c, const void *priv, size_t len)
   return 0;
 }
 
-int cm_client_connect(rdma_ctx *c, const char *ip, const char *port)
+int cm_client_resolve(rdma_ctx *c, const char *ip, const char *port)
 {
   struct addrinfo hints = {0}, *res = NULL;
   hints.ai_family = AF_INET;
@@ -105,24 +105,20 @@ int cm_client_connect(rdma_ctx *c, const char *ip, const char *port)
   LOG("cm: rdma_resolve_route(timeout=5000ms)");
   CHECK(rdma_resolve_route(c->id, 5000), "rdma_resolve_route");
 
-  LOG("cm: waiting ROUTE_RESOLVED (or CONNECT_RESPONSE)");
-  if (cm_wait_event(c, RDMA_CM_EVENT_ROUTE_RESOLVED, &ev) != 0)
-  {
-    LOG("cm: ROUTE_RESOLVED not seen; trying CONNECT_RESPONSE");
-    CHECK(cm_wait_event(c, RDMA_CM_EVENT_CONNECT_RESPONSE, &ev), "CONNECT_RESPONSE");
-    rdma_ack_cm_event(ev);
-  }
-  else
-  {
-    rdma_ack_cm_event(ev);
-  }
+  LOG("cm: waiting ROUTE_RESOLVED");
+  CHECK(cm_wait_event(c, RDMA_CM_EVENT_ROUTE_RESOLVED, &ev), "ROUTE_RESOLVED");
+  rdma_ack_cm_event(ev);
 
+  return 0;
+}
+
+int cm_client_connect_only(rdma_ctx *c, uint8_t initiator_depth, uint8_t responder_resources)
+{
   struct rdma_conn_param p = {
-      .initiator_depth = 1,
-      .responder_resources = 1,
+      .initiator_depth = initiator_depth,
+      .responder_resources = responder_resources,
       .retry_count = 7,
       .rnr_retry_count = 7};
-
   LOG("cm: rdma_connect()");
   CHECK(rdma_connect(c->id, &p), "rdma_connect");
   LOG("cm: rdma_connect() returned");

@@ -22,9 +22,18 @@ int main(int argc, char **argv)
 
   rdma_ctx c = {0};
   LOG("Create CM channel + ID + connect");
-  cm_create_channel_and_id(&c);
-  cm_client_connect(&c, ip, port);
 
+  cm_create_channel_and_id(&c);
+  CHECK(cm_client_resolve(&c, ip, port), "resolve");
+
+  // Build PD/CQ/QP **before** rdma_connect
+  LOG("Build PD/CQ/QP");
+  build_pd_cq_qp(&c, IBV_QPT_RC, 64, 32, 32, 1);
+
+  // Now connect (tiny credits for rxe)
+  CHECK(cm_client_connect_only(&c, 1, 1), "rdma_connect");
+
+  // Wait for CONNECTED (handles CONNECT_RESPONSE → ESTABLISHED, and returns conn params)
   struct rdma_conn_param connp = {0};
   CHECK(cm_wait_connected(&c, &connp), "ESTABLISHED");
 
