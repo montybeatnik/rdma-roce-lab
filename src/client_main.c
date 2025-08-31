@@ -53,9 +53,6 @@ int main(int argc, char **argv)
   c.remote_rkey = ntohl(info.rkey);
   LOG("Got remote addr=%#lx rkey=0x%x", (unsigned long)c.remote_addr, c.remote_rkey);
 
-  LOG("Build PD/CQ/QP");
-  build_pd_cq_qp(&c, IBV_QPT_RC, 64, 32, 32, 1);
-
   LOG("Register local tx/rx");
   alloc_and_reg(&c, &c.buf_tx, &c.mr_tx, BUF_SZ, IBV_ACCESS_LOCAL_WRITE);
   alloc_and_reg(&c, &c.buf_rx, &c.mr_rx, BUF_SZ, IBV_ACCESS_LOCAL_WRITE);
