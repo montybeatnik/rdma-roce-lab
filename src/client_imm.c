@@ -33,7 +33,7 @@ int main(int argc, char **argv) {
   build_pd_cq_qp(&c, IBV_QPT_RC, 64, 32, 32, 1);
 
   // 3) rdma_connect with tiny credits (SoftRoCE-friendly)
-  CHECK(cm_client_connect_only(&c, 1, 1), "rdma_connect");
+  CHECK(cm_client_connect_only(&c, 0, 0), "rdma_connect");
 
   // 4) Wait for ESTABLISHED and pull private_data safely
   struct rdma_conn_param connp = {0};
