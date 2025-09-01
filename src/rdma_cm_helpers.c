@@ -1,4 +1,3 @@
-
 #include "rdma_cm_helpers.h"
 
 #include <netdb.h>
@@ -74,11 +73,11 @@ int cm_server_accept_with_priv(rdma_ctx *c, const void *priv, size_t len) {
   struct rdma_conn_param p = {.private_data = priv,
                               .private_data_len = (uint8_t)len,
                               // for READ/WRITE example
-                              // .responder_resources = 1,
-                              // .initiator_depth = 1,
+                              .responder_resources = 1,
+                              .initiator_depth = 1,
                               // for IMM example
-                              .responder_resources = 0,
-                              .initiator_depth = 0,
+                              // .responder_resources = 0,
+                              // .initiator_depth = 0,
                               .retry_count = 7,
                               .rnr_retry_count = 7};
   CHECK(rdma_accept(c->id, &p), "rdma_accept");
