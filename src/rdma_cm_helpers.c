@@ -1,18 +1,17 @@
 
-#include <string.h>
-#include <netdb.h>
 #include "rdma_cm_helpers.h"
 
-int cm_create_channel_and_id(rdma_ctx *c)
-{
+#include <netdb.h>
+#include <string.h>
+
+int cm_create_channel_and_id(rdma_ctx *c) {
   c->ec = rdma_create_event_channel();
   CHECK(!c->ec, "rdma_create_event_channel");
   CHECK(rdma_create_id(c->ec, &c->id, NULL, RDMA_PS_TCP), "rdma_create_id");
   return 0;
 }
 
-int cm_server_listen(rdma_ctx *c, const char *port)
-{
+int cm_server_listen(rdma_ctx *c, const char *port) {
   struct addrinfo hints = {0}, *res = NULL;
   hints.ai_flags = AI_PASSIVE;
   hints.ai_family = AF_INET;
@@ -23,13 +22,13 @@ int cm_server_listen(rdma_ctx *c, const char *port)
   return 0;
 }
 
-int cm_wait_event(rdma_ctx *c, enum rdma_cm_event_type want, struct rdma_cm_event **out)
-{
+int cm_wait_event(rdma_ctx *c, enum rdma_cm_event_type want,
+                  struct rdma_cm_event **out) {
   struct rdma_cm_event *ev = NULL;
   CHECK(rdma_get_cm_event(c->ec, &ev), "rdma_get_cm_event");
-  if (ev->event != want)
-  {
-    LOG("Unexpected CM event: got=%d want=%d status=%d", ev->event, want, ev->status);
+  if (ev->event != want) {
+    LOG("Unexpected CM event: got=%d want=%d status=%d", ev->event, want,
+        ev->status);
     rdma_ack_cm_event(ev);
     return -1;
   }
@@ -37,17 +36,13 @@ int cm_wait_event(rdma_ctx *c, enum rdma_cm_event_type want, struct rdma_cm_even
   return 0;
 }
 
-int cm_wait_connected(rdma_ctx *c, struct rdma_conn_param *out_conn_param)
-{
+int cm_wait_connected(rdma_ctx *c, struct rdma_conn_param *out_conn_param) {
   struct rdma_cm_event *ev = NULL;
 
   // Try ESTABLISHED directly
-  if (rdma_get_cm_event(c->ec, &ev) == 0)
-  {
-    if (ev->event == RDMA_CM_EVENT_ESTABLISHED)
-    {
-      if (out_conn_param)
-        *out_conn_param = ev->param.conn; // copy before ack
+  if (rdma_get_cm_event(c->ec, &ev) == 0) {
+    if (ev->event == RDMA_CM_EVENT_ESTABLISHED) {
+      if (out_conn_param) *out_conn_param = ev->param.conn;  // copy before ack
       rdma_ack_cm_event(ev);
       return 0;
     }
@@ -57,35 +52,36 @@ int cm_wait_connected(rdma_ctx *c, struct rdma_conn_param *out_conn_param)
     rdma_ack_cm_event(ev);
 
     // If we got CONNECT_RESPONSE, wait one more for ESTABLISHED
-    if (got == RDMA_CM_EVENT_CONNECT_RESPONSE)
-    {
-      if (rdma_get_cm_event(c->ec, &ev) == 0 && ev->event == RDMA_CM_EVENT_ESTABLISHED)
-      {
-        if (out_conn_param)
-          *out_conn_param = ev->param.conn;
+    if (got == RDMA_CM_EVENT_CONNECT_RESPONSE) {
+      if (rdma_get_cm_event(c->ec, &ev) == 0 &&
+          ev->event == RDMA_CM_EVENT_ESTABLISHED) {
+        if (out_conn_param) *out_conn_param = ev->param.conn;
         rdma_ack_cm_event(ev);
         return 0;
       }
     }
 
     // Unexpected sequence
-    LOG("Unexpected CM event while waiting for ESTABLISHED: got=%d status=%d", got, status);
+    LOG("Unexpected CM event while waiting for ESTABLISHED: got=%d status=%d",
+        got, status);
     return -1;
   }
   perror("rdma_get_cm_event");
   return -1;
 }
 
-int cm_server_accept_with_priv(rdma_ctx *c, const void *priv, size_t len)
-{
-  struct rdma_conn_param p = {
-      .private_data = priv, .private_data_len = (uint8_t)len, .responder_resources = 1, .initiator_depth = 1, .retry_count = 7, .rnr_retry_count = 7};
+int cm_server_accept_with_priv(rdma_ctx *c, const void *priv, size_t len) {
+  struct rdma_conn_param p = {.private_data = priv,
+                              .private_data_len = (uint8_t)len,
+                              .responder_resources = 1,
+                              .initiator_depth = 1,
+                              .retry_count = 7,
+                              .rnr_retry_count = 7};
   CHECK(rdma_accept(c->id, &p), "rdma_accept");
   return 0;
 }
 
-int cm_client_resolve(rdma_ctx *c, const char *ip, const char *port)
-{
+int cm_client_resolve(rdma_ctx *c, const char *ip, const char *port) {
   struct addrinfo hints = {0}, *res = NULL;
   hints.ai_family = AF_INET;
 
@@ -93,7 +89,8 @@ int cm_client_resolve(rdma_ctx *c, const char *ip, const char *port)
   CHECK(getaddrinfo(ip, port, &hints, &res), "getaddrinfo");
 
   LOG("cm: rdma_resolve_addr(timeout=5000ms)");
-  CHECK(rdma_resolve_addr(c->id, NULL, res->ai_addr, 5000), "rdma_resolve_addr");
+  CHECK(rdma_resolve_addr(c->id, NULL, res->ai_addr, 5000),
+        "rdma_resolve_addr");
   freeaddrinfo(res);
 
   struct rdma_cm_event *ev = NULL;
@@ -112,13 +109,12 @@ int cm_client_resolve(rdma_ctx *c, const char *ip, const char *port)
   return 0;
 }
 
-int cm_client_connect_only(rdma_ctx *c, uint8_t initiator_depth, uint8_t responder_resources)
-{
-  struct rdma_conn_param p = {
-      .initiator_depth = initiator_depth,
-      .responder_resources = responder_resources,
-      .retry_count = 7,
-      .rnr_retry_count = 7};
+int cm_client_connect_only(rdma_ctx *c, uint8_t initiator_depth,
+                           uint8_t responder_resources) {
+  struct rdma_conn_param p = {.initiator_depth = initiator_depth,
+                              .responder_resources = responder_resources,
+                              .retry_count = 7,
+                              .rnr_retry_count = 7};
   LOG("cm: rdma_connect()");
   CHECK(rdma_connect(c->id, &p), "rdma_connect");
   LOG("cm: rdma_connect() returned");

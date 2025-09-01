@@ -1,19 +1,18 @@
 
 #include <stdio.h>
 #include <string.h>
+
 #include "common.h"
-#include "rdma_ctx.h"
-#include "rdma_cm_helpers.h"
 #include "rdma_builders.h"
+#include "rdma_cm_helpers.h"
+#include "rdma_ctx.h"
 #include "rdma_mem.h"
 #include "rdma_ops.h"
 
 #define BUF_SZ 4096
 
-int main(int argc, char **argv)
-{
-  if (argc < 3)
-  {
+int main(int argc, char **argv) {
+  if (argc < 3) {
     fprintf(stderr, "Usage: %s <server-ip> <port>\n", argv[0]);
     return 1;
   }
@@ -33,25 +32,24 @@ int main(int argc, char **argv)
   // Now connect (tiny credits for rxe)
   CHECK(cm_client_connect_only(&c, 1, 1), "rdma_connect");
 
-  // Wait for CONNECTED (handles CONNECT_RESPONSE → ESTABLISHED, and returns conn params)
+  // Wait for CONNECTED (handles CONNECT_RESPONSE → ESTABLISHED, and returns
+  // conn params)
   struct rdma_conn_param connp = {0};
   CHECK(cm_wait_connected(&c, &connp), "ESTABLISHED");
 
   // Extract private_data safely into a local struct
   struct remote_buf_info info = {0};
-  if (connp.private_data && connp.private_data_len >= sizeof(info))
-  {
+  if (connp.private_data && connp.private_data_len >= sizeof(info)) {
     memcpy(&info, connp.private_data, sizeof(info));
-  }
-  else
-  {
+  } else {
     fprintf(stderr, "No or short private_data\n");
     return 2;
   }
 
   c.remote_addr = ntohll_u64(info.addr);
   c.remote_rkey = ntohl(info.rkey);
-  LOG("Got remote addr=%#lx rkey=0x%x", (unsigned long)c.remote_addr, c.remote_rkey);
+  LOG("Got remote addr=%#lx rkey=0x%x", (unsigned long)c.remote_addr,
+      c.remote_rkey);
 
   LOG("Register local tx/rx");
   alloc_and_reg(&c, &c.buf_tx, &c.mr_tx, BUF_SZ, IBV_ACCESS_LOCAL_WRITE);
@@ -67,8 +65,8 @@ int main(int argc, char **argv)
   LOG("WRITE complete");
 
   LOG("Post RDMA_READ");
-  CHECK(post_read(c.qp, c.mr_rx, c.buf_rx, c.remote_addr, c.remote_rkey,
-                  BUF_SZ, 2, 1),
+  CHECK(post_read(c.qp, c.mr_rx, c.buf_rx, c.remote_addr, c.remote_rkey, BUF_SZ,
+                  2, 1),
         "post_read");
   CHECK(poll_one(c.cq, &wc), "poll read");
   LOG("READ complete: '%s'", (char *)c.buf_rx);
@@ -76,16 +74,11 @@ int main(int argc, char **argv)
   rdma_disconnect(c.id);
 
   mem_free_all(&c);
-  if (c.qp)
-    rdma_destroy_qp(c.id);
-  if (c.cq)
-    ibv_destroy_cq(c.cq);
-  if (c.pd)
-    ibv_dealloc_pd(c.pd);
-  if (c.id)
-    rdma_destroy_id(c.id);
-  if (c.ec)
-    rdma_destroy_event_channel(c.ec);
+  if (c.qp) rdma_destroy_qp(c.id);
+  if (c.cq) ibv_destroy_cq(c.cq);
+  if (c.pd) ibv_dealloc_pd(c.pd);
+  if (c.id) rdma_destroy_id(c.id);
+  if (c.ec) rdma_destroy_event_channel(c.ec);
   LOG("Done");
   return 0;
 }

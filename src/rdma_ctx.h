@@ -1,8 +1,8 @@
 
 #pragma once
-#include <stdint.h>
-#include <rdma/rdma_cma.h>
 #include <infiniband/verbs.h>
+#include <rdma/rdma_cma.h>
+#include <stdint.h>
 
 typedef struct {
   // CM

@@ -25,3 +25,20 @@ rdma_client_imm: $(SRCS) $(SRC_DIR)/client_imm.c $(HDRS)
 
 clean:
 	rm -f rdma_server rdma_client rdma_server_imm rdma_client_imm
+
+# ---- Tests ----
+TESTS_DIR=tests
+UNIT_TESTS=$(TESTS_DIR)/test_endian $(TESTS_DIR)/test_mem
+
+$(TESTS_DIR)/test_endian: $(TESTS_DIR)/test_endian.c $(SRC_DIR)/common.h
+	$(CC) $(CFLAGS) -I$(SRC_DIR) $< -o $@
+
+$(TESTS_DIR)/test_mem: $(TESTS_DIR)/test_mem.c
+	$(CC) $(CFLAGS) $< -o $@
+
+tests: $(UNIT_TESTS)
+	@echo "[RUN] unit: test_endian"; $(TESTS_DIR)/test_endian
+	@echo "[RUN] unit: test_mem";    $(TESTS_DIR)/test_mem
+	@echo "[RUN] integration (log-based)"; $(TESTS_DIR)/run_integration.sh $(SERVER_IP)
+
+.PHONY: tests

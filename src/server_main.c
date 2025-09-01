@@ -2,10 +2,11 @@
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+
 #include "common.h"
-#include "rdma_ctx.h"
-#include "rdma_cm_helpers.h"
 #include "rdma_builders.h"
+#include "rdma_cm_helpers.h"
+#include "rdma_ctx.h"
 #include "rdma_mem.h"
 
 #define BUF_SZ 4096
@@ -20,22 +21,23 @@ int main(int argc, char **argv) {
 
   LOG("Wait for CONNECT_REQUEST");
   struct rdma_cm_event *ev;
-  CHECK(cm_wait_event(&c, RDMA_CM_EVENT_CONNECT_REQUEST, &ev), "CONNECT_REQUEST");
-  c.id = ev->id; rdma_ack_cm_event(ev);
+  CHECK(cm_wait_event(&c, RDMA_CM_EVENT_CONNECT_REQUEST, &ev),
+        "CONNECT_REQUEST");
+  c.id = ev->id;
+  rdma_ack_cm_event(ev);
 
   LOG("Build PD/CQ/QP");
   build_pd_cq_qp(&c, IBV_QPT_RC, 64, 32, 32, 1);
 
   LOG("Register remote-exposed MR");
   alloc_and_reg(&c, &c.buf_remote, &c.mr_remote, BUF_SZ,
-    IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_WRITE);
-  strcpy((char*)c.buf_remote, "server-initial");
+                IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_READ |
+                    IBV_ACCESS_REMOTE_WRITE);
+  strcpy((char *)c.buf_remote, "server-initial");
   dump_mr(c.mr_remote, "server", c.buf_remote, BUF_SZ);
 
-  struct remote_buf_info info = {
-    .addr = htonll_u64((uintptr_t)c.buf_remote),
-    .rkey = htonl(c.mr_remote->rkey)
-  };
+  struct remote_buf_info info = {.addr = htonll_u64((uintptr_t)c.buf_remote),
+                                 .rkey = htonl(c.mr_remote->rkey)};
   LOG("Accept with private_data (addr=%#lx rkey=0x%x)",
       (unsigned long)ntohll_u64(info.addr), ntohl(info.rkey));
   cm_server_accept_with_priv(&c, &info, sizeof(info));
@@ -46,10 +48,11 @@ int main(int argc, char **argv) {
 
   LOG("Give client time to WRITE…");
   sleep(2);
-  LOG("After WRITE, buf='%s'", (char*)c.buf_remote);
+  LOG("After WRITE, buf='%s'", (char *)c.buf_remote);
 
-  snprintf((char*)c.buf_remote, BUF_SZ, "server-says-hello-%ld", (long)getpid());
-  LOG("Server updated buf for READ: '%s'", (char*)c.buf_remote);
+  snprintf((char *)c.buf_remote, BUF_SZ, "server-says-hello-%ld",
+           (long)getpid());
+  LOG("Server updated buf for READ: '%s'", (char *)c.buf_remote);
 
   LOG("Press Enter to disconnect…");
   getchar();
