@@ -1,3 +1,19 @@
+/**
+ * File: server_imm.c
+ * Purpose: Server that posts a RECV and waits for WRITE_WITH_IMM (immediate data).
+ *
+ * Overview:
+ * Demonstrates WRITE_WITH_IMM (client) and a matching RECV (server) to signal application-level events without a separate SEND/SEND-with-imm path.
+ *
+ * Notes:
+ *  - This file is part of an educational RDMA sample showing connection setup,
+ *    memory registration, and basic one-sided operations (WRITE/READ) and
+ *    WRITE_WITH_IMM (two-sided notification). Comments are intentionally verbose.
+ *  - The code targets librdmacm + libibverbs (RoCEv2/SoftRoCE friendly).
+ *
+ * Generated: 2025-09-02T09:13:19.458600Z
+ */
+
 
 #include <stdio.h>
 #include <string.h>
@@ -10,6 +26,16 @@
 #include "rdma_ops.h"
 
 #define BUF_SZ 4096
+/**
+ * main(int argc, char **argv)
+ * Auto-comment: See body for details.
+ *
+ * Parameters:
+ *   int argc - see function body for usage.
+ *   char **argv - see function body for usage.
+ * Returns:
+ *   int (see return statements).
+ */
 
 int main(int argc, char **argv) {
   const char *port = (argc >= 2) ? argv[1] : "7472";

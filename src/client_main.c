@@ -1,3 +1,22 @@
+/**
+ * File: client_main.c
+ * Purpose: Client that connects, RDMA WRITEs to remote buffer and RDMA READs it
+ * back.
+ *
+ * Overview:
+ * Resolves, builds PD/CQ/QP, connects, reads server's private_data (addr,rkey),
+ * posts WRITE then READ, and logs completions. Demonstrates one-sided
+ * operations end-to-end.
+ *
+ * Notes:
+ *  - This file is part of an educational RDMA sample showing connection setup,
+ *    memory registration, and basic one-sided operations (WRITE/READ) and
+ *    WRITE_WITH_IMM (two-sided notification). Comments are intentionally
+ * verbose.
+ *  - The code targets librdmacm + libibverbs (RoCEv2/SoftRoCE friendly).
+ *
+ * Generated: 2025-09-02T09:13:19.458249Z
+ */
 
 #include <stdio.h>
 #include <string.h>
@@ -10,6 +29,16 @@
 #include "rdma_ops.h"
 
 #define BUF_SZ 4096
+/**
+ * main(int argc, char **argv)
+ * Auto-comment: See body for details.
+ *
+ * Parameters:
+ *   int argc - see function body for usage.
+ *   char **argv - see function body for usage.
+ * Returns:
+ *   int (see return statements).
+ */
 
 int main(int argc, char **argv) {
   if (argc < 3) {
@@ -19,7 +48,7 @@ int main(int argc, char **argv) {
   const char *ip = argv[1];
   const char *port = argv[2];
 
-  rdma_ctx c = {0};
+  rdma_ctx c = {0}; // initialize RDAM context to zero values. 
   LOG("Create CM channel + ID + connect");
 
   cm_create_channel_and_id(&c);
