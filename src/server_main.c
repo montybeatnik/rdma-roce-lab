@@ -79,10 +79,6 @@ int main(int argc, char **argv) {
   sleep(2);
   LOG("After WRITE, buf='%s'", (char *)c.buf_remote);
 
-  snprintf((char *)c.buf_remote, BUF_SZ, "server-says-hello-%ld",
-           (long)getpid());
-  LOG("Server updated buf for READ: '%s'", (char *)c.buf_remote);
-
   LOG("Press Enter to disconnect…");
   getchar();
   rdma_disconnect(c.id);
