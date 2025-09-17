@@ -1,3 +1,22 @@
+/**
+ * File: server_main.c
+ * Purpose: Server that exposes a remote buffer and accepts a connection
+ * (READ/WRITE path).
+ *
+ * Overview:
+ * Sets up CM listen → accept; builds PD/CQ/QP; registers an MR; shares
+ * {addr,rkey} in private_data; then idles or exits after completions depending
+ * on example scope.
+ *
+ * Notes:
+ *  - This file is part of an educational RDMA sample showing connection setup,
+ *    memory registration, and basic one-sided operations (WRITE/READ) and
+ *    WRITE_WITH_IMM (two-sided notification). Comments are intentionally
+ * verbose.
+ *  - The code targets librdmacm + libibverbs (RoCEv2/SoftRoCE friendly).
+ *
+ * Generated: 2025-09-02T09:13:19.457955Z
+ */
 
 #include <stdio.h>
 #include <string.h>
@@ -10,6 +29,16 @@
 #include "rdma_mem.h"
 
 #define BUF_SZ 4096
+/**
+ * main(int argc, char **argv)
+ * Auto-comment: See body for details.
+ *
+ * Parameters:
+ *   int argc - see function body for usage.
+ *   char **argv - see function body for usage.
+ * Returns:
+ *   int (see return statements).
+ */
 
 int main(int argc, char **argv) {
   const char *port = (argc >= 2) ? argv[1] : "7471";
@@ -49,10 +78,6 @@ int main(int argc, char **argv) {
   LOG("Give client time to WRITE…");
   sleep(2);
   LOG("After WRITE, buf='%s'", (char *)c.buf_remote);
-
-  snprintf((char *)c.buf_remote, BUF_SZ, "server-says-hello-%ld",
-           (long)getpid());
-  LOG("Server updated buf for READ: '%s'", (char *)c.buf_remote);
 
   LOG("Press Enter to disconnect…");
   getchar();

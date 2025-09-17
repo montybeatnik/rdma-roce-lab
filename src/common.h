@@ -1,3 +1,22 @@
+/**
+ * File: common.h
+ * Purpose: Common macros, logging helpers, and small utilities shared by
+ * samples.
+ *
+ * Overview:
+ * Defines LOG/CHK helpers, endian helpers (htonll/ntohll), simple dump
+ * functions for CQE/SGE/WR, and small structs (e.g., remote_buf_info) used to
+ * exchange rkey/addr via CM private_data.
+ *
+ * Notes:
+ *  - This file is part of an educational RDMA sample showing connection setup,
+ *    memory registration, and basic one-sided operations (WRITE/READ) and
+ *    WRITE_WITH_IMM (two-sided notification). Comments are intentionally
+ * verbose.
+ *  - The code targets librdmacm + libibverbs (RoCEv2/SoftRoCE friendly).
+ *
+ * Generated: 2025-09-02T09:13:19.454918Z
+ */
 
 #pragma once
 #include <arpa/inet.h>
@@ -10,6 +29,7 @@ struct remote_buf_info {
   uint64_t addr;  // remote virtual address
   uint32_t rkey;  // remote rkey
 } __attribute__((packed));
+/* prototype */
 
 static inline uint64_t htonll_u64(uint64_t x) {
 #if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
@@ -19,6 +39,7 @@ static inline uint64_t htonll_u64(uint64_t x) {
   return x;
 #endif
 }
+/* prototype */
 static inline uint64_t ntohll_u64(uint64_t x) { return htonll_u64(x); }
 
 #define LOG(fmt, ...) fprintf(stderr, "[%s] " fmt "\n", __func__, ##__VA_ARGS__)
@@ -72,6 +93,7 @@ static inline void dump_qp(const struct ibv_qp *qp) {
     LOG("ibv_query_qp failed");
   }
 }
+/* prototype */
 
 static inline void dump_mr(const struct ibv_mr *mr, const char *name,
                            void *addr, size_t len) {
@@ -95,12 +117,14 @@ static inline const char *wc_opcode_str(enum ibv_wc_opcode op) {
       return "?";
   }
 }
+/* prototype */
 
 static inline void dump_wc(const struct ibv_wc *wc) {
   LOG("WC: wr_id=%lu status=%d opcode=%s byte_len=%u qp_num=%u",
       (unsigned long)wc->wr_id, wc->status, wc_opcode_str(wc->opcode),
       wc->byte_len, wc->qp_num);
 }
+/* prototype */
 
 static inline void dump_sge(const struct ibv_sge *s, const char *who) {
   LOG("SGE(%s): addr=%#llx len=%u lkey=0x%x", who, (unsigned long long)s->addr,

@@ -1,0 +1,124 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000" font-family="Inter,Segoe UI,Arial,sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerUnits="strokeWidth" markerWidth="10" markerHeight="8" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#111"/>
+    </marker>
+    <marker id="arrowBlue" viewBox="0 0 10 10" refX="9" refY="5" markerUnits="strokeWidth" markerWidth="10" markerHeight="8" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#145ea8"/>
+    </marker>
+    <marker id="arrowGreen" viewBox="0 0 10 10" refX="9" refY="5" markerUnits="strokeWidth" markerWidth="10" markerHeight="8" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#1a7f37"/>
+    </marker>
+    <marker id="arrowOrange" viewBox="0 0 10 10" refX="9" refY="5" markerUnits="strokeWidth" markerWidth="10" markerHeight="8" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#b45309"/>
+    </marker>
+    <linearGradient id="panelGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#f5f7fb"/>
+    </linearGradient>
+    <style>
+      .title{font-weight:700;fill:#111;font-size:26px}
+      .subtitle{fill:#334155;font-size:18px}
+      .box{fill:url(#panelGrad);stroke:#94a3b8;stroke-width:2;rx:14;ry:14}
+      .chip{fill:#eef2ff;stroke:#6366f1;stroke-width:2;rx:10;ry:10}
+      .nic{fill:#eff6ff;stroke:#0ea5e9;stroke-width:2;rx:14;ry:14}
+      .cq{fill:#ecfdf5;stroke:#10b981;stroke-width:2;rx:8;ry:8}
+      .qp{fill:#fff7ed;stroke:#f59e0b;stroke-width:2;rx:8;ry:8}
+      .pd{fill:#f5f3ff;stroke:#8b5cf6;stroke-width:2;rx:8;ry:8}
+      .mr{fill:#fef2f2;stroke:#ef4444;stroke-width:2;rx:8;ry:8}
+      .iface{fill:#e0f2fe;stroke:#0284c7;stroke-width:2;rx:8;ry:8}
+      .legend{fill:#475569;font-size:14px}
+      .label{fill:#111;font-size:16px}
+      .small{fill:#111;font-size:14px}
+    </style>
+  </defs>
+<text x="40" y="50" class="title" text-anchor="start">RDMA Components & Data Flow (RC)</text>
+<text x="40" y="78" class="subtitle" text-anchor="start">From user-space verbs → RNIC → network → remote RNIC, including lkey/rkey & virtual addresses</text>
+<rect x="30" y="110" width="740" height="820" class="box"/>
+<text x="50" y="145" class="subtitle" text-anchor="start">Host A (Requester / Client)</text>
+<rect x="60" y="170" width="300" height="120" class="chip"/>
+<text x="210" y="200" class="label" text-anchor="middle">Application</text>
+<text x="80" y="230" class="small" text-anchor="start">• posts WRs (WRITE/READ)</text>
+<text x="80" y="252" class="small" text-anchor="start">• polls CQ / handles events</text>
+<rect x="380" y="170" width="360" height="120" class="chip"/>
+<text x="560" y="200" class="label" text-anchor="middle">librdmacm + libibverbs</text>
+<text x="400" y="230" class="small" text-anchor="start">• CM: resolve/route/connect</text>
+<text x="400" y="252" class="small" text-anchor="start">• Verbs: PD/MR/QP/CQ ops</text>
+<rect x="60" y="320" width="160" height="90" class="pd"/>
+<text x="140" y="350" class="label" text-anchor="middle">PD</text>
+<text x="80" y="374" class="small" text-anchor="start">protection domain</text>
+<rect x="240" y="310" width="210" height="110" class="mr"/>
+<text x="345" y="340" class="label" text-anchor="middle">MR (registered)</text>
+<text x="255" y="364" class="small" text-anchor="start">virt addr: 0xA..</text>
+<text x="255" y="384" class="small" text-anchor="start">lkey: 0xABCD | rkey: 0xABCD</text>
+<rect x="470" y="310" width="270" height="110" class="qp"/>
+<text x="605" y="336" class="label" text-anchor="middle">QP (RC)</text>
+<text x="485" y="360" class="small" text-anchor="start">SQ → SEND/WRITE/READ WQEs</text>
+<text x="485" y="382" class="small" text-anchor="start">RQ → (for two‑sided ops)</text>
+<rect x="60" y="430" width="300" height="100" class="cq"/>
+<text x="210" y="460" class="label" text-anchor="middle">Completion Queue (CQ)</text>
+<text x="80" y="484" class="small" text-anchor="start">CQEs signal WR completions</text>
+<rect x="380" y="440" width="360" height="220" class="nic"/>
+<text x="560" y="468" class="label" text-anchor="middle">RNIC / Channel Adapter</text>
+<text x="400" y="494" class="small" text-anchor="start">DMA engine, packetizer, PSN/retries</text>
+<rect x="410" y="520" width="145" height="60" class="iface"/>
+<text x="482" y="555" class="small" text-anchor="middle">SQ/RQ Doorbells</text>
+<rect x="565" y="520" width="155" height="60" class="iface"/>
+<text x="643" y="555" class="small" text-anchor="middle">CQ Doorbell</text>
+<rect x="410" y="610" width="310" height="40" class="iface"/>
+<text x="565" y="636" class="small" text-anchor="middle">Host A Interface (enp0s1 / rxe0)</text>
+<rect x="780" y="350" width="40" height="300" class="box"/>
+<text x="800" y="510" class="label" text-anchor="middle">↔</text>
+<text x="800" y="540" class="small" text-anchor="middle">IP/UDP (RoCEv2)</text>
+<rect x="830" y="110" width="740" height="820" class="box"/>
+<text x="850" y="145" class="subtitle" text-anchor="start">Host B (Responder / Server)</text>
+<rect x="860" y="320" width="160" height="90" class="pd"/>
+<text x="940" y="350" class="label" text-anchor="middle">PD</text>
+<text x="880" y="374" class="small" text-anchor="start">protection domain</text>
+<rect x="1040" y="310" width="210" height="110" class="mr"/>
+<text x="1145" y="340" class="label" text-anchor="middle">Remote MR</text>
+<text x="1055" y="364" class="small" text-anchor="start">virt addr: 0xB..</text>
+<text x="1055" y="384" class="small" text-anchor="start">rkey: 0x29F (required)</text>
+<rect x="1270" y="310" width="270" height="110" class="qp"/>
+<text x="1405" y="336" class="label" text-anchor="middle">QP (RC)</text>
+<text x="1285" y="360" class="small" text-anchor="start">RQ/SQ on remote peer</text>
+<rect x="860" y="430" width="300" height="100" class="cq"/>
+<text x="1010" y="460" class="label" text-anchor="middle">Completion Queue (CQ)</text>
+<text x="880" y="484" class="small" text-anchor="start">Signals RECV/READ RESP</text>
+<rect x="1180" y="440" width="360" height="220" class="nic"/>
+<text x="1360" y="468" class="label" text-anchor="middle">RNIC / Channel Adapter</text>
+<text x="1200" y="494" class="small" text-anchor="start">Validates rkey, DMAs into MR</text>
+<rect x="1210" y="520" width="145" height="60" class="iface"/>
+<text x="1282" y="555" class="small" text-anchor="middle">SQ/RQ Doorbells</text>
+<rect x="1365" y="520" width="155" height="60" class="iface"/>
+<text x="1443" y="555" class="small" text-anchor="middle">CQ Doorbell</text>
+<rect x="1210" y="610" width="310" height="40" class="iface"/>
+<text x="1365" y="636" class="small" text-anchor="middle">Host B Interface (enp0s1 / rxe0)</text>
+<line x1="350" y1="365" x2="470" y2="365" stroke="#8b5cf6" stroke-width="2" marker-end="url(#arrowBlue)"/>
+<text x="360" y="355" class="small" text-anchor="start">ibv_reg_mr() → lkey/rkey</text>
+<line x1="470" y1="330" x2="380" y2="520" stroke="#b45309" stroke-width="2" marker-end="url(#arrowOrange)"/>
+<text x="410" y="330" class="small" text-anchor="start">ibv_post_send(WRITE)</text>
+<text x="385" y="510" class="small" text-anchor="start">SGE(lkey, addr, len)</text>
+<line x1="690" y1="630" x2="780" y2="630" stroke="#145ea8" stroke-width="3" marker-end="url(#arrowBlue)"/>
+<text x="690" y="620" class="small" text-anchor="start">UDP/4791 + RDMAP/DDP</text>
+<line x1="1180" y1="365" x2="1250" y2="365" stroke="#1a7f37" stroke-width="2" marker-end="url(#arrowGreen)"/>
+<text x="1080" y="355" class="small" text-anchor="start">remote_addr + rkey</text>
+<line x1="1360" y1="630" x2="1210" y2="630" stroke="#145ea8" stroke-width="2" marker-end="url(#arrowBlue)"/>
+<line x1="565" y1="580" x2="565" y2="530" stroke="#1a7f37" stroke-width="2" marker-end="url(#arrowGreen)"/>
+<text x="575" y="560" class="small" text-anchor="start">CQE (WRITE complete)</text>
+<line x1="605" y1="420" x2="605" y2="360" stroke="#145ea8" stroke-width="2" stroke-dasharray="6,5" marker-end="url(#arrowBlue)"/>
+<text x="615" y="390" class="small" text-anchor="start">ibv_post_send(READ)</text>
+<line x1="780" y1="380" x2="1180" y2="380" stroke="#145ea8" stroke-width="2" stroke-dasharray="6,5" marker-end="url(#arrowBlue)"/>
+<text x="880" y="370" class="small" text-anchor="start">READ request</text>
+<line x1="1180" y1="400" x2="780" y2="400" stroke="#145ea8" stroke-width="2" stroke-dasharray="6,5" marker-end="url(#arrowBlue)"/>
+<text x="960" y="415" class="small" text-anchor="start">READ response (payload)</text>
+<line x1="565" y1="610" x2="565" y2="650" stroke="#1a7f37" stroke-width="2" marker-end="url(#arrowGreen)"/>
+<text x="575" y="640" class="small" text-anchor="start">CQE (READ complete)</text>
+<text x="40" y="860" class="label" text-anchor="start">Legend:</text>
+<text x="150" y="860" class="legend" text-anchor="start">Blue = control/packets, Green = completions, Orange = WQEs/doorbells</text>
+<text x="40" y="882" class="label" text-anchor="start">Keys/Addresses:</text>
+<text x="200" y="882" class="legend" text-anchor="start">lkey (local SGE auth) • rkey (remote access auth) • remote_addr (virt addr in Remote MR)</text>
+<text x="40" y="904" class="label" text-anchor="start">Queues:</text>
+<text x="200" y="904" class="legend" text-anchor="start">SQ/RQ (per-QP) • CQ (shared) • Doorbells ring RNIC</text>
+</svg>

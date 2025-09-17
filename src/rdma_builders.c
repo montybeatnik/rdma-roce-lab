@@ -1,5 +1,39 @@
+/**
+ * File: rdma_builders.c
+ * Purpose: Construct PD/CQ/QP and dump helpers that inspect objects for
+ * debugging.
+ *
+ * Overview:
+ * Creates PD, CQ, and QP bound to an rdma_cm_id; associates CQ with both
+ * send/recv; prints useful attributes like QP number, state, and caps to ease
+ * troubleshooting.
+ *
+ * Notes:
+ *  - This file is part of an educational RDMA sample showing connection setup,
+ *    memory registration, and basic one-sided operations (WRITE/READ) and
+ *    WRITE_WITH_IMM (two-sided notification). Comments are intentionally
+ * verbose.
+ *  - The code targets librdmacm + libibverbs (RoCEv2/SoftRoCE friendly).
+ *
+ * Generated: 2025-09-02T09:13:19.456505Z
+ */
 
 #include "rdma_builders.h"
+/**
+ * build_pd_cq_qp(rdma_ctx *c, enum ibv_qp_type qpt, int cq_depth,int
+ * max_send_wr, int max_recv_wr, int max_sge) Creates or configures a verbs
+ * object (PD/CQ/QP).
+ *
+ * Parameters:
+ *   rdma_ctx *c - see function body for usage.
+ *   enum ibv_qp_type qpt - see function body for usage.
+ *   int cq_depth - see function body for usage.
+ *   int max_send_wr - see function body for usage.
+ *   int max_recv_wr - see function body for usage.
+ *   int max_sge - see function body for usage.
+ * Returns:
+ *   int (see return statements).
+ */
 
 int build_pd_cq_qp(rdma_ctx *c, enum ibv_qp_type qpt, int cq_depth,
                    int max_send_wr, int max_recv_wr, int max_sge) {
@@ -18,7 +52,9 @@ int build_pd_cq_qp(rdma_ctx *c, enum ibv_qp_type qpt, int cq_depth,
                                         .max_send_sge = max_sge,
                                         .max_recv_sge = max_sge},
                                 .qp_type = qpt};
-  CHECK(rdma_create_qp(c->id, c->pd, &qa), "rdma_create_qp");
+  CHECK(/* Create QP associated with PD/CQs via rdma_cm_id */ rdma_create_qp(
+            c->id, c->pd, &qa),
+        "rdma_create_qp");
   c->qp = c->id->qp;
   dump_qp(c->qp);
   return 0;

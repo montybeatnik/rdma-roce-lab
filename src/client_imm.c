@@ -1,3 +1,19 @@
+/**
+ * File: client_imm.c
+ * Purpose: Client that performs RDMA WRITE_WITH_IMM to notify remote server.
+ *
+ * Overview:
+ * Demonstrates WRITE_WITH_IMM (client) and a matching RECV (server) to signal application-level events without a separate SEND/SEND-with-imm path.
+ *
+ * Notes:
+ *  - This file is part of an educational RDMA sample showing connection setup,
+ *    memory registration, and basic one-sided operations (WRITE/READ) and
+ *    WRITE_WITH_IMM (two-sided notification). Comments are intentionally verbose.
+ *  - The code targets librdmacm + libibverbs (RoCEv2/SoftRoCE friendly).
+ *
+ * Generated: 2025-09-02T09:13:19.459253Z
+ */
+
 
 #include <arpa/inet.h>
 #include <stdio.h>
@@ -11,6 +27,16 @@
 #include "rdma_ops.h"
 
 #define BUF_SZ 4096
+/**
+ * main(int argc, char **argv)
+ * Auto-comment: See body for details.
+ *
+ * Parameters:
+ *   int argc - see function body for usage.
+ *   char **argv - see function body for usage.
+ * Returns:
+ *   int (see return statements).
+ */
 
 int main(int argc, char **argv) {
   if (argc < 3) {
@@ -76,7 +102,7 @@ int main(int argc, char **argv) {
   dump_sge(&s, "WRITE_WITH_IMM");
   dump_wr_rdma(&wr);
   LOG("Post RDMA_WRITE_WITH_IMM (imm=host %u / net 0x%x)", ntohl(imm), imm);
-  CHECK(ibv_post_send(c.qp, &wr, &bad), "ibv_post_send write_with_imm");
+  CHECK(/* Post a SEND/WRITE/READ WQE to SQ */ ibv_post_send(c.qp, &wr, &bad), "ibv_post_send write_with_imm");
 
   struct ibv_wc wc;
   CHECK(poll_one(c.cq, &wc), "poll write_with_imm");
