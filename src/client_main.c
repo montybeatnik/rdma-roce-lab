@@ -48,7 +48,7 @@ int main(int argc, char **argv) {
   const char *ip = argv[1];
   const char *port = argv[2];
 
-  rdma_ctx c = {0}; // initialize RDAM context to zero values. 
+  rdma_ctx c = {0}; // initialize RDMA context to zero values. 
   LOG("Create CM channel + ID + connect");
 
   cm_create_channel_and_id(&c);
@@ -61,7 +61,7 @@ int main(int argc, char **argv) {
   // Now connect (tiny credits for rxe)
   CHECK(cm_client_connect_only(&c, 1, 1), "rdma_connect");
 
-  // Wait for CONNECTED (handles CONNECT_RESPONSE → ESTABLISHED, and returns
+  // Wait for CONNECTED (handles CONNECT_RESPONSE -> ESTABLISHED, and returns
   // conn params)
   struct rdma_conn_param connp = {0};
   CHECK(cm_wait_connected(&c, &connp), "ESTABLISHED");
