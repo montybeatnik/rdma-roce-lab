@@ -26,6 +26,14 @@ int main(void) {
   T(addr == 0xAABBCCDDEEFF0011ULL);
   T(rkey == 0x12345678);
 
+  struct remote_buf_info packed =
+      pack_remote_buf_info(0x0102030405060708ULL, 0x90ABCDEF);
+  uint64_t p_addr = 0;
+  uint32_t p_rkey = 0;
+  unpack_remote_buf_info(&packed, &p_addr, &p_rkey);
+  T(p_addr == 0x0102030405060708ULL);
+  T(p_rkey == 0x90ABCDEF);
+
   puts("OK test_endian");
   return 0;
 }

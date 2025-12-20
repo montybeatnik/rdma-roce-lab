@@ -39,6 +39,15 @@ $(TESTS_DIR)/test_mem: $(TESTS_DIR)/test_mem.c
 tests: $(UNIT_TESTS)
 	@echo "[RUN] unit: test_endian"; $(TESTS_DIR)/test_endian
 	@echo "[RUN] unit: test_mem";    $(TESTS_DIR)/test_mem
-	@echo "[RUN] integration (log-based)"; $(TESTS_DIR)/run_integration.sh $(SERVER_IP)
+	@echo "[RUN] integration (log-based)"; $(TESTS_DIR)/test_run_integration.sh $(SERVER_IP)
 
-.PHONY: tests
+test: tests
+
+# ---- Multipass lab ----
+lab-deploy:
+	bash setup_rdma_lab.sh
+
+lab-clean:
+	multipass delete rdma-server rdma-client && multipass purge
+
+.PHONY: tests test lab-deploy lab-clean

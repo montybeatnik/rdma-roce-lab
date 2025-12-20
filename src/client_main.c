@@ -75,8 +75,7 @@ int main(int argc, char **argv) {
     return 2;
   }
 
-  c.remote_addr = ntohll_u64(info.addr);
-  c.remote_rkey = ntohl(info.rkey);
+  unpack_remote_buf_info(&info, &c.remote_addr, &c.remote_rkey);
   LOG("Got remote addr=%#lx rkey=0x%x", (unsigned long)c.remote_addr,
       c.remote_rkey);
 

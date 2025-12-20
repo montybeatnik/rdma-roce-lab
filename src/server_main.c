@@ -65,10 +65,10 @@ int main(int argc, char **argv) {
   strcpy((char *)c.buf_remote, "server-initial");
   dump_mr(c.mr_remote, "server", c.buf_remote, BUF_SZ);
 
-  struct remote_buf_info info = {.addr = htonll_u64((uintptr_t)c.buf_remote),
-                                 .rkey = htonl(c.mr_remote->rkey)};
+  struct remote_buf_info info =
+      pack_remote_buf_info((uintptr_t)c.buf_remote, c.mr_remote->rkey);
   LOG("Accept with private_data (addr=%#lx rkey=0x%x)",
-      (unsigned long)ntohll_u64(info.addr), ntohl(info.rkey));
+      (unsigned long)(uintptr_t)c.buf_remote, c.mr_remote->rkey);
   cm_server_accept_with_priv(&c, &info, sizeof(info));
 
   CHECK(cm_wait_event(&c, RDMA_CM_EVENT_ESTABLISHED, &ev), "ESTABLISHED");

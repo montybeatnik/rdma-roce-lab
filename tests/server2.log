@@ -1,0 +1,17 @@
+[main] Create CM channel + listen
+[main] Wait for CONNECT_REQUEST
+[main] Build PD/CQ/QP
+[dump_qp] QP dump: qpn=19 state=INIT mtu=1 sq_psn=0 rq_psn=0 max_rd_atomic=0 max_dest_rd_atomic=0 retry=0 rnr_retry=0 timeout=0
+[dump_qp] QP caps: max_send_wr=63 max_recv_wr=63 max_sge={s=1,r=1}
+[main] Register remote-exposed MR
+[dump_mr] MR server: addr=0xaaaacbd4b000 len=4096 lkey=0x44a rkey=0x44a
+[main] Register and post RECV buffer (notification-only)
+[dump_sge] SGE(RECV): addr=0xaaaacbd4d000 len=64 lkey=0x5b8
+[main] Accept with private_data (addr=0xaaaacbd4b000 rkey=0x44a)
+[dump_qp] QP dump: qpn=19 state=RTS mtu=3 sq_psn=4319567 rq_psn=13223209 max_rd_atomic=1 max_dest_rd_atomic=1 retry=7 rnr_retry=7 timeout=19
+[dump_qp] QP caps: max_send_wr=63 max_recv_wr=63 max_sge={s=1,r=1}
+[main] Wait for RECV (WRITE_WITH_IMM notification)…
+[dump_wc] WC: wr_id=100 status=0 opcode=RECV_RDMA_IMM byte_len=22 qp_num=19
+[main] Got RECV with IMM: imm_data=0x16000000 (host=22)
+[main] After client's WRITE_WITH_IMM, buf='client-wrote-with-imm'
+[main] Done

@@ -14,7 +14,11 @@ make -s
 
 PORT1=7471
 PORT2=7472
-SERVER_IP="${1:-127.0.0.1}"
+SERVER_IP="${1:-}"
+if [ -z "${SERVER_IP}" ]; then
+  SERVER_IP="$(ip -o -4 addr show | awk '$2 != "lo" {print $4; exit}' | cut -d/ -f1)"
+fi
+[ -n "${SERVER_IP}" ] || SERVER_IP="127.0.0.1"
 
 # Example 1: WRITE + READ
 echo "[INFO] Starting server (example 1)…"

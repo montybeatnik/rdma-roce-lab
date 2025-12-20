@@ -1,0 +1,11 @@
+[main] Create CM channel + listen
+[main] Wait for CONNECT_REQUEST
+[main] Build PD/CQ/QP
+[dump_qp] QP dump: qpn=18 state=INIT mtu=1 sq_psn=0 rq_psn=0 max_rd_atomic=0 max_dest_rd_atomic=0 retry=0 rnr_retry=0 timeout=0
+[dump_qp] QP caps: max_send_wr=63 max_recv_wr=63 max_sge={s=1,r=1}
+[main] Register remote-exposed MR
+[dump_mr] MR server: addr=0xaaaaf677b000 len=4096 lkey=0x299 rkey=0x299
+[main] Accept with private_data (addr=0xaaaaf677b000 rkey=0x299)
+[dump_qp] QP dump: qpn=18 state=RTS mtu=3 sq_psn=8105715 rq_psn=10294376 max_rd_atomic=1 max_dest_rd_atomic=1 retry=7 rnr_retry=7 timeout=19
+[dump_qp] QP caps: max_send_wr=63 max_recv_wr=63 max_sge={s=1,r=1}
+[main] Give client time to WRITE…

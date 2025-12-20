@@ -1,0 +1,24 @@
+[main] Create CM channel + ID + connect
+[cm_client_resolve] cm: getaddrinfo(192.168.2.20:7471)
+[cm_client_resolve] cm: rdma_resolve_addr(timeout=5000ms)
+[cm_client_resolve] cm: waiting ADDR_RESOLVED
+[cm_client_resolve] cm: rdma_resolve_route(timeout=5000ms)
+[cm_client_resolve] cm: waiting ROUTE_RESOLVED
+[main] Build PD/CQ/QP
+[dump_qp] QP dump: qpn=17 state=INIT mtu=1 sq_psn=0 rq_psn=0 max_rd_atomic=0 max_dest_rd_atomic=0 retry=0 rnr_retry=0 timeout=0
+[dump_qp] QP caps: max_send_wr=63 max_recv_wr=63 max_sge={s=1,r=1}
+[cm_client_connect_only] cm: rdma_connect()
+[cm_client_connect_only] cm: rdma_connect() returned
+[main] Got remote addr=0xaaaaf677b000 rkey=0x299
+[main] Register local tx/rx
+[main] Post RDMA_WRITE
+[dump_sge] SGE(WRITE): addr=0xaaaac67b8000 len=18 lkey=0x3db
+[dump_wr_rdma] WR: wr_id=1 opcode=RDMA_WRITE signaled=1 num_sge=1 remote_addr=0xaaaaf677b000 rkey=0x299
+[dump_wc] WC: wr_id=1 status=0 opcode=RDMA_WRITE byte_len=18 qp_num=17
+[main] WRITE complete
+[main] Post RDMA_READ
+[dump_sge] SGE(READ): addr=0xaaaac67ba000 len=4096 lkey=0x405
+[dump_wr_rdma] WR: wr_id=2 opcode=RDMA_READ signaled=1 num_sge=1 remote_addr=0xaaaaf677b000 rkey=0x299
+[dump_wc] WC: wr_id=2 status=0 opcode=RDMA_READ byte_len=4096 qp_num=17
+[main] READ complete: 'client-wrote-this'
+[main] Done

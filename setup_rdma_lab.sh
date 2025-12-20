@@ -9,6 +9,9 @@ MEM=4G
 DISK=30G
 UBU="jammy"                      # Ubuntu 22.04 ARM64
 SSH_KEY="${HOME}/.ssh/id_ed25519.pub"   # change if you use id_rsa.pub
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+HOST_REPO="${SCRIPT_DIR}"
+MOUNT_PATH="/home/ubuntu/rdma-roce-lab"
 
 # -------- Helpers --------
 need_cmd() { command -v "$1" >/dev/null 2>&1; }
@@ -45,7 +48,11 @@ CLOUDINIT="$(cat <<'EOF'
 package_update: true
 package_upgrade: false
 packages:
+  - build-essential
+  - pkg-config
   - rdma-core
+  - libibverbs-dev
+  - librdmacm-dev
   - ibverbs-providers
   - ibverbs-utils
   - perftest
@@ -60,13 +67,21 @@ write_files:
       set -euo pipefail
       IFACE="$(ip -o link show | awk -F': ' '{print $2}' | grep -v lo | head -n1)"
       if [ -z "${IFACE:-}" ]; then echo "No NIC found" >&2; exit 1; fi
-      modprobe rdma_rxe || true
+      if ! modprobe rdma_rxe; then
+        echo "rdma_rxe module missing; installing linux-modules-extra-$(uname -r)" >&2
+        apt-get update
+        apt-get install -y "linux-modules-extra-$(uname -r)" || true
+        modprobe rdma_rxe || true
+      fi
       if ! rdma link | grep -q "netdev ${IFACE}"; then
         rdma link add rxe0 type rxe netdev "${IFACE}" || true
       fi
       rdma link || true
       ibv_devices || true
       ibv_devinfo || true
+      if ! ibv_devices 2>/dev/null | grep -q rxe0; then
+        echo "Warning: rxe0 not visible; check rdma_rxe module and rdma link" >&2
+      fi
 
 runcmd:
   - [ bash, -lc, "usermod -aG sudo ubuntu && echo 'ubuntu ALL=(ALL) NOPASSWD:ALL' >/etc/sudoers.d/99-ubuntu && chmod 440 /etc/sudoers.d/99-ubuntu" ]
@@ -117,6 +132,11 @@ log "VMs are up:"
 echo "  $VM1: $IP1"
 echo "  $VM2: $IP2"
 
+# -------- Mount repo into VMs --------
+log "Mounting repo into VMs"
+multipass mount "$HOST_REPO" "$VM1":"$MOUNT_PATH"
+multipass mount "$HOST_REPO" "$VM2":"$MOUNT_PATH"
+
 # -------- Connectivity & quick test --------
 log "Testing SSH connectivity and verbs visibility"
 ssh -o StrictHostKeyChecking=no ubuntu@"$IP1" "hostname && ibv_devices || true"
@@ -156,4 +176,3 @@ Capture traffic:
 Teardown:
   multipass delete $VM1 $VM2 && multipass purge
 EOF
-

@@ -1,4 +1,6 @@
-# Lab
+# Lab notes (legacy)
+
+For a clean, step-by-step guide, see `docs/lab-setup.md`.
 
 ## fire up lab
 ```bash

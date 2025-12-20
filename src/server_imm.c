@@ -65,12 +65,10 @@ int main(int argc, char **argv) {
   alloc_and_reg(&c, &rx_note, &mr_rx, 64, IBV_ACCESS_LOCAL_WRITE);
   CHECK(post_recv(c.qp, mr_rx, rx_note, 64, 100), "post_recv");
 
-  struct remote_buf_info info = {
-    .addr = htonll_u64((uintptr_t)c.buf_remote),
-    .rkey = htonl(c.mr_remote->rkey)
-  };
+  struct remote_buf_info info =
+      pack_remote_buf_info((uintptr_t)c.buf_remote, c.mr_remote->rkey);
   LOG("Accept with private_data (addr=%#lx rkey=0x%x)",
-      (unsigned long)ntohll_u64(info.addr), ntohl(info.rkey));
+      (unsigned long)(uintptr_t)c.buf_remote, c.mr_remote->rkey);
   cm_server_accept_with_priv(&c, &info, sizeof(info));
 
   CHECK(cm_wait_event(&c, RDMA_CM_EVENT_ESTABLISHED, &ev), "ESTABLISHED");
