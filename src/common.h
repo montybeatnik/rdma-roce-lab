@@ -52,7 +52,15 @@ static inline void unpack_remote_buf_info(const struct remote_buf_info* info,
   if (rkey) *rkey = ntohl(info->rkey);
 }
 
+#ifdef RDMA_VERBOSE
 #define LOG(fmt, ...) fprintf(stderr, "[%s] " fmt "\n", __func__, ##__VA_ARGS__)
+#else
+#define LOG(fmt, ...)                                                     \
+  do {                                                                    \
+    if (0)                                                                \
+      fprintf(stderr, "[%s] " fmt "\n", __func__, ##__VA_ARGS__);          \
+  } while (0)
+#endif
 #define CHECK(x, msg)                           \
   do {                                          \
     if ((x)) {                                  \

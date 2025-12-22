@@ -86,17 +86,43 @@ int main(int argc, char **argv) {
 
   struct timespec t0, t1;
   clock_gettime(CLOCK_MONOTONIC, &t0);
+  const int max_outstanding = 64;
+  const int signal_every = 16;
+  int inflight = 0;
+  int current_batch = 0;
+  int batch_sizes[1024];
+  int batch_head = 0;
+  int batch_tail = 0;
   uint64_t sent = 0;
   uint64_t wr_id = 1;
   while (sent < total) {
     uint64_t remaining = total - sent;
     uint64_t this_chunk = remaining < chunk ? remaining : chunk;
+    current_batch++;
+    int do_signal = (current_batch == signal_every) ||
+                    (sent + this_chunk == total);
     CHECK(post_write(c.qp, c.mr_tx, c.buf_tx, c.remote_addr + sent,
-                     c.remote_rkey, (size_t)this_chunk, wr_id++, 1),
+                     c.remote_rkey, (size_t)this_chunk, wr_id++, do_signal),
           "post_write");
+    inflight++;
+    if (do_signal) {
+      batch_sizes[batch_tail] = current_batch;
+      batch_tail = (batch_tail + 1) % (int)(sizeof(batch_sizes) / sizeof(batch_sizes[0]));
+      current_batch = 0;
+    }
+    if (inflight >= max_outstanding) {
+      struct ibv_wc wc;
+      CHECK(poll_one(c.cq, &wc), "poll write");
+      inflight -= batch_sizes[batch_head];
+      batch_head = (batch_head + 1) % (int)(sizeof(batch_sizes) / sizeof(batch_sizes[0]));
+    }
+    sent += this_chunk;
+  }
+  while (batch_head != batch_tail) {
     struct ibv_wc wc;
     CHECK(poll_one(c.cq, &wc), "poll write");
-    sent += this_chunk;
+    inflight -= batch_sizes[batch_head];
+    batch_head = (batch_head + 1) % (int)(sizeof(batch_sizes) / sizeof(batch_sizes[0]));
   }
   clock_gettime(CLOCK_MONOTONIC, &t1);
 

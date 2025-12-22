@@ -174,6 +174,33 @@ Full context: `src/client_imm.c`
 - **Capability safety**: `rkey` limits access to a specific buffer.
 - **Backpressure**: CQ polling is explicit; design your producer/consumer flow.
 
+## 6.5) Drawbacks and trade-offs (including Go-Back-N effects)
+RDMA buys low latency and low CPU overhead, but it also exposes trade-offs that
+matter at scale:
+
+- **Go-Back-N style loss recovery**: RoCEv2 relies on PFC and lossless behavior,
+  but if a loss does occur, many implementations behave like Go-Back-N at the
+  transport layer. A single loss can force retransmission of a window of packets,
+  causing head-of-line blocking and bursty latency.
+- **Operational fragility**: PFC misconfiguration can create congestion spread
+  and pause storms, which hurt tail latency.
+- **Memory pinning pressure**: large MRs consume pinned pages; on smaller hosts,
+  this can impact the OS and lead to ENOSPC-like failures unless memlock limits
+  are tuned.
+- **Debuggability**: failures often show up as CM rejects or CQ errors rather
+  than friendly exceptions, so you need capture and counters to diagnose.
+
+These issues don’t invalidate RDMA; they just raise the bar for network
+engineering and observability.
+
+Mitigations worth noting:
+- **PFC/ECN tuning**: keep pause thresholds tight and enable ECN on congested
+  links so loss is rare and congestion is signaled early.
+- **Right-size MRs**: avoid pinning multi-GB regions unless needed; reuse and
+  pool MRs to reduce registration churn.
+- **Monitor the fabric**: track PFC pause frames, retransmissions, and CQ error
+  rates so you can catch issues before they cascade.
+
 ## 7) RDMA vs TCP (1 GB transfer comparison)
 This section uses a 1 GB payload and compares:
 - **RDMA bulk write**: one-sided WRITE in large chunks.

@@ -83,6 +83,14 @@ write_files:
       if ! ibv_devices 2>/dev/null | grep -q rxe0; then
         echo "Warning: rxe0 not visible; check rdma_rxe module and rdma link" >&2
       fi
+  - path: /etc/security/limits.d/99-rdma.conf
+    permissions: '0644'
+    content: |
+      # Allow large RDMA memory registrations (memlock) for experiments.
+      ubuntu soft memlock unlimited
+      ubuntu hard memlock unlimited
+      * soft memlock unlimited
+      * hard memlock unlimited
 
 runcmd:
   - [ bash, -lc, "usermod -aG sudo ubuntu && echo 'ubuntu ALL=(ALL) NOPASSWD:ALL' >/etc/sudoers.d/99-ubuntu && chmod 440 /etc/sudoers.d/99-ubuntu" ]
