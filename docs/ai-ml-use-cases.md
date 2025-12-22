@@ -27,7 +27,12 @@ This repo focuses on low-level RDMA building blocks. The scenarios below show wh
 - Mapping: WRITE for the batch payload, WRITE_WITH_IMM for a batch-id signal.
 - Why RDMA: consistent latency and lower CPU overhead per request.
 
-## 6) GPU-direct staging (conceptual)
+## 6) Training checkpoint staging
+- Pattern: workers push checkpoint shards into a pinned buffer for background persistence.
+- Mapping: RDMA_WRITE into a staging MR, optional READ to verify shard consistency.
+- Why RDMA: keeps training loops hot while checkpoint IO proceeds asynchronously.
+
+## 7) GPU-direct staging (conceptual)
 - Pattern: stage data into pinned host buffers, then hand off to GPU DMA.
 - Mapping: same RDMA writes as Example 1, but into pinned staging buffers.
 - Why RDMA: higher throughput for data loaders and pre-processing pipelines.

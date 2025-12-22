@@ -18,6 +18,7 @@
 #include <arpa/inet.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 
 #include "common.h"
 #include "rdma_builders.h"
@@ -45,6 +46,15 @@ int main(int argc, char **argv) {
   }
   const char *ip = argv[1];
   const char *port = argv[2];
+  const char *src_ip = getenv("RDMA_SRC_IP");
+  uint8_t initiator_depth = 0;
+  uint8_t responder_resources = 0;
+  const char *init_env = getenv("RDMA_INITIATOR_DEPTH");
+  const char *resp_env = getenv("RDMA_RESPONDER_RESOURCES");
+  if (init_env && *init_env)
+    initiator_depth = (uint8_t)strtoul(init_env, NULL, 10);
+  if (resp_env && *resp_env)
+    responder_resources = (uint8_t)strtoul(resp_env, NULL, 10);
 
   // --- connect & setup (new flow) ---
   rdma_ctx c = {0};
@@ -52,14 +62,15 @@ int main(int argc, char **argv) {
   cm_create_channel_and_id(&c);
 
   // 1) Resolve first (ADDR/ROUTE)
-  CHECK(cm_client_resolve(&c, ip, port), "resolve");
+  CHECK(cm_client_resolve(&c, ip, port, src_ip), "resolve");
 
   // 2) Build PD/CQ/QP BEFORE rdma_connect
   LOG("Build PD/CQ/QP");
   build_pd_cq_qp(&c, IBV_QPT_RC, 64, 32, 32, 1);
 
   // 3) rdma_connect with tiny credits (SoftRoCE-friendly)
-  CHECK(cm_client_connect_only(&c, 0, 0), "rdma_connect");
+  CHECK(cm_client_connect_only(&c, initiator_depth, responder_resources),
+        "rdma_connect");
 
   // 4) Wait for ESTABLISHED and pull private_data safely
   struct rdma_conn_param connp = {0};

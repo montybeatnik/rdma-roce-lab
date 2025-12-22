@@ -5,7 +5,8 @@ set -euo pipefail
 VM1=rdma-server
 VM2=rdma-client
 CPUS=4
-MEM=4G
+# MEM=4G
+MEM=6G
 DISK=30G
 UBU="jammy"                      # Ubuntu 22.04 ARM64
 SSH_KEY="${HOME}/.ssh/id_ed25519.pub"   # change if you use id_rsa.pub
@@ -131,6 +132,34 @@ done
 log "VMs are up:"
 echo "  $VM1: $IP1"
 echo "  $VM2: $IP2"
+
+# -------- /etc/hosts update (optional, requires sudo) --------
+HOSTS_BEGIN="# rdma-roce-lab BEGIN"
+HOSTS_END="# rdma-roce-lab END"
+HOSTS_BLOCK="${HOSTS_BEGIN}
+${IP1} ${VM1}
+${IP2} ${VM2}
+${HOSTS_END}"
+
+update_hosts() {
+  local tmp
+  tmp="$(mktemp)"
+  if sudo grep -q "${HOSTS_BEGIN}" /etc/hosts; then
+    sudo awk -v begin="${HOSTS_BEGIN}" -v end="${HOSTS_END}" '
+      $0 == begin {skip=1; next}
+      $0 == end {skip=0; next}
+      !skip {print}
+    ' /etc/hosts > "$tmp"
+  else
+    sudo cat /etc/hosts > "$tmp"
+  fi
+  printf "\n%s\n" "$HOSTS_BLOCK" >> "$tmp"
+  sudo cp "$tmp" /etc/hosts
+  rm -f "$tmp"
+}
+
+log "Updating /etc/hosts with $VM1/$VM2 (may prompt for sudo)"
+update_hosts || warn "Skipping /etc/hosts update"
 
 # -------- Mount repo into VMs --------
 log "Mounting repo into VMs"

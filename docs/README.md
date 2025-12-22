@@ -8,6 +8,7 @@ This folder holds the deeper explanations and reference material for the lab.
 - docs/ai-ml-use-cases.md - practical AI/ML scenarios and how RDMA/RoCE fits.
 - docs/testing.md - unit and integration test guidance.
 - docs/blog-post-ideas.md - blog outline ideas for sharing what you learn.
+- docs/tutorial-narrative.md - narrative walkthrough tying setup and code to real-world use.
 
 ## Navigation
 - Next: [Architecture](architecture.md)

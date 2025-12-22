@@ -13,10 +13,11 @@ Tested on Ubuntu 22.04 with SoftRoCE (rxe).
 - Document how these flows map to real AI/ML systems.
 
 ## Learning path
-1) Build and run Example 1 (WRITE + READ) to see one-sided operations.
-2) Build and run Example 2 (WRITE_WITH_IMM + RECV) to see notification flows.
-3) Read `docs/architecture.md` and `docs/ai-ml-use-cases.md`.
-4) Use `examples/ai-ml/README.md` to extend the samples.
+1) Build and run the minimal sample in `examples/minimal/` to see the full flow without extra diagnostics.
+2) Build and run Example 1 (WRITE + READ) to see one-sided operations in detail.
+3) Build and run Example 2 (WRITE_WITH_IMM + RECV) to see notification flows.
+4) Read `docs/architecture.md`, `docs/tutorial-narrative.md`, and `docs/ai-ml-use-cases.md`.
+5) Use `examples/ai-ml/README.md` to extend the samples.
 
 ## Layout
 ```
@@ -77,9 +78,13 @@ On client VM:
 - [lab-setup](docs/lab-setup.md)
 - [testing](docs/testing.md)
 - [blog-post-ideas](docs/blog-post-ideas.md)
+- [tutorial narrative](docs/tutorial-narrative.md)
 
 ## Examples
 - `examples/ai-ml/README.md`
+- `examples/minimal/README.md`
+- `examples/rdma-bulk/README.md`
+- `examples/tcp/README.md`
 
 ## Tests
 ```bash

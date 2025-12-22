@@ -21,6 +21,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+#include <stdlib.h>
 
 #include "common.h"
 #include "rdma_builders.h"
@@ -42,11 +43,12 @@
 
 int main(int argc, char **argv) {
   const char *port = (argc >= 2) ? argv[1] : "7471";
+  const char *bind_ip = getenv("RDMA_BIND_IP");
 
   rdma_ctx c = {0};
   LOG("Create CM channel + listen");
   cm_create_channel_and_id(&c);
-  cm_server_listen(&c, port);
+  cm_server_listen(&c, bind_ip, port);
 
   LOG("Wait for CONNECT_REQUEST");
   struct rdma_cm_event *ev;
