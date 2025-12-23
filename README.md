@@ -8,6 +8,19 @@ If your data plane is the nervous system of an AI or storage stack, RDMA is the
 shortest path. This repo strips the path to essentials so you can see where
 efficiency appears, where it leaks, and why.
 
+## Why this lab exists
+Modern AI fabrics treat the data center as the unit of compute, which means
+every inefficiency gets multiplied. RDMA reduces CPU overhead and memory copies,
+but the story does not end at peak throughput. Loss, retries, and stalled
+queues turn “fast” into “wasteful” when scale and congestion show up. This lab
+exists to make those tradeoffs visible: the deliberate setup costs, the fast
+path that follows, and the points where retransmissions or backpressure can
+erase the gains. It is a technical, hands-on way to connect protocol behavior
+to resource use: CPU cycles, cache pollution, power draw, and the cooling and
+water that follow. The goal is not moralizing. It is systems clarity. If you
+can see where time and work are lost, you can design paths that shed less of
+both.
+
 ## Stakes
 RDMA reduces copies and CPU cycles, but it can hide cost in setup, signaling,
 and congestion. The goal here is not just “fast,” but fewer wasted interrupts,
@@ -91,6 +104,11 @@ or retries), open an issue with measurements and notes.
 
 ## TODO (optional)
 - Add a scripted benchmark harness that runs RDMA and TCP side by side.
+
+## Related posts
+- [RDMA: the network powerhouse of an AI fabric (for now, anyway)](https://medium.com/@christopher_hern/rdma-the-network-powerhouse-of-an-ai-fabric-for-now-anyway-c50ce3f69879)
+- TODO: The cost of moving data
+- TODO: RDMA loss and recovery at scale
 
 ## Repo map
 ```
