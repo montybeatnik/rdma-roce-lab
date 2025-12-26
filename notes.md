@@ -4,7 +4,7 @@ For a clean, step-by-step guide, see `docs/lab-setup.md`.
 
 ## fire up lab
 ```bash
-bash setup_rdma_lab.sh
+bash scripts/guide/01_multipass_setup.sh
 ```
 
 ## install gcc deps

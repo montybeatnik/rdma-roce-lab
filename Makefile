@@ -23,17 +23,17 @@ rdma_server_imm: $(SRCS) $(SRC_DIR)/server_imm.c $(HDRS)
 rdma_client_imm: $(SRCS) $(SRC_DIR)/client_imm.c $(HDRS)
 	$(CC) $(CFLAGS) -I$(SRC_DIR) $(SRCS) $(SRC_DIR)/client_imm.c -o $@ $(LDFLAGS)
 
-rdma_bulk_server: $(SRCS) examples/rdma-bulk/rdma_bulk_server.c $(HDRS)
-	$(CC) $(CFLAGS) -I$(SRC_DIR) $(SRCS) examples/rdma-bulk/rdma_bulk_server.c -o $@ $(LDFLAGS)
+rdma_bulk_server: $(SRCS) examples/c/rdma-bulk/rdma_bulk_server.c $(HDRS)
+	$(CC) $(CFLAGS) -I$(SRC_DIR) $(SRCS) examples/c/rdma-bulk/rdma_bulk_server.c -o $@ $(LDFLAGS)
 
-rdma_bulk_client: $(SRCS) examples/rdma-bulk/rdma_bulk_client.c $(HDRS)
-	$(CC) $(CFLAGS) -I$(SRC_DIR) $(SRCS) examples/rdma-bulk/rdma_bulk_client.c -o $@ $(LDFLAGS)
+rdma_bulk_client: $(SRCS) examples/c/rdma-bulk/rdma_bulk_client.c $(HDRS)
+	$(CC) $(CFLAGS) -I$(SRC_DIR) $(SRCS) examples/c/rdma-bulk/rdma_bulk_client.c -o $@ $(LDFLAGS)
 
-tcp_server: examples/tcp/tcp_server.c examples/tcp/tcp_common.h
-	$(CC) $(CFLAGS) examples/tcp/tcp_server.c -o $@
+tcp_server: examples/c/tcp/tcp_server.c examples/c/tcp/tcp_common.h
+	$(CC) $(CFLAGS) examples/c/tcp/tcp_server.c -o $@
 
-tcp_client: examples/tcp/tcp_client.c examples/tcp/tcp_common.h
-	$(CC) $(CFLAGS) examples/tcp/tcp_client.c -o $@
+tcp_client: examples/c/tcp/tcp_client.c examples/c/tcp/tcp_common.h
+	$(CC) $(CFLAGS) examples/c/tcp/tcp_client.c -o $@
 
 perf-compare:
 	@echo "[INFO] RDMA bulk (1G) and TCP (1G) comparison"
@@ -43,11 +43,11 @@ perf-compare:
 	@echo "Client VM (rdma-client):"
 	@echo "  ./rdma_bulk_client <SERVER_IP> 7471 1G 4M | tee /tmp/rdma_1g_client.log"
 	@echo "  ./tcp_client <SERVER_IP> 9000 1G          | tee /tmp/tcp_1g_client.log"
-minimal_server: $(SRCS) examples/minimal/server_min.c $(HDRS)
-	$(CC) $(CFLAGS) -I$(SRC_DIR) $(SRCS) examples/minimal/server_min.c -o rdma_min_server $(LDFLAGS)
+minimal_server: $(SRCS) examples/c/minimal/server_min.c $(HDRS)
+	$(CC) $(CFLAGS) -I$(SRC_DIR) $(SRCS) examples/c/minimal/server_min.c -o rdma_min_server $(LDFLAGS)
 
-minimal_client: $(SRCS) examples/minimal/client_min.c $(HDRS)
-	$(CC) $(CFLAGS) -I$(SRC_DIR) $(SRCS) examples/minimal/client_min.c -o rdma_min_client $(LDFLAGS)
+minimal_client: $(SRCS) examples/c/minimal/client_min.c $(HDRS)
+	$(CC) $(CFLAGS) -I$(SRC_DIR) $(SRCS) examples/c/minimal/client_min.c -o rdma_min_client $(LDFLAGS)
 
 minimal: minimal_server minimal_client
 
@@ -148,11 +148,11 @@ lab-capture-live:
 
 # ---- Multipass lab ----
 lab-deploy:
-	bash setup_rdma_lab.sh
+	bash scripts/guide/01_multipass_setup.sh
 
 # To test 1G transfer
 # make lab-clean
-# CPUS=4 MEM=8G DISK=40G bash setup_rdma_lab.sh
+# CPUS=4 MEM=8G DISK=40G bash scripts/guide/01_multipass_setup.sh
 
 
 lab-clean:
