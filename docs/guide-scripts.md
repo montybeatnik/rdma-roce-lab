@@ -39,6 +39,15 @@ teaching artifact, not a black box.
 - **Why it exists**: notification patterns are common in AI/ML pipelines.
 - **Where to run**: inside each VM (or host) with the repo checked out.
 
+## 6) Python minimal (RDMA CM)
+Use Make targets for quick runs:
+```bash
+make py-list-devices
+make py-query-ports PY_DEV=rxe0 PY_PORT=1
+make py-minimal-server PY_CM_PORT=7471
+make py-minimal-client PY_SERVER_IP=<SERVER_IP> PY_CM_PORT=7471
+```
+
 ## Optional: RDMA vs TCP bulk comparison
 Run the binaries directly:
 ```bash

@@ -13,7 +13,8 @@ import random
 import sys
 
 try:
-    from pyverbs.device import Context, DeviceList
+    import pyverbs.device as pv_dev
+    from pyverbs.device import Context
     from pyverbs.pd import PD
     from pyverbs.cq import CQ
     from pyverbs.mr import MR
@@ -31,9 +32,27 @@ except ImportError as exc:
     raise SystemExit(1) from exc
 
 
+def _list_devices():
+    if hasattr(pv_dev, "DeviceList"):
+        return pv_dev.DeviceList()
+    if hasattr(pv_dev, "get_device_list"):
+        return pv_dev.get_device_list()
+    raise RuntimeError("pyverbs.device has no DeviceList or get_device_list")
+
+
+def _device_name(dev):
+    if hasattr(dev, "name"):
+        val = dev.name
+        return val() if callable(val) else val
+    if hasattr(dev, "device_name"):
+        val = dev.device_name
+        return val() if callable(val) else val
+    return str(dev)
+
+
 def _get_device(name: str):
-    for dev in DeviceList():
-        if dev.name == name:
+    for dev in _list_devices():
+        if _device_name(dev) == name:
             return dev
     return None
 

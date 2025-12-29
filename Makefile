@@ -2,6 +2,12 @@
 CC=gcc
 CFLAGS=-O2 -std=c11 -Wall -D_GNU_SOURCE
 LDFLAGS=-lrdmacm -libverbs
+PYTHON?=python3
+PYTEST?=$(PYTHON) -m pytest
+PY_DEV?=rxe0
+PY_PORT?=1
+PY_CM_PORT?=7471
+PY_SERVER_IP?=
 
 SRC_DIR=src
 BIN_DIR=.
@@ -71,6 +77,9 @@ tests: $(UNIT_TESTS)
 	@echo "[RUN] integration (log-based)"; $(TESTS_DIR)/test_run_integration.sh $(SERVER_IP)
 
 test: tests
+
+py-tests:
+	@$(PYTEST) -q
 
 # ---- Capture ----
 CAPTURE_HOST ?= rdma-server
@@ -158,5 +167,22 @@ lab-deploy:
 lab-clean:
 	multipass delete rdma-server rdma-client && multipass purge
 
+py-list-devices:
+	$(PYTHON) examples/py/00_list_devices.py
+
+py-query-ports:
+	$(PYTHON) examples/py/01_query_ports.py $(PY_DEV) $(PY_PORT)
+
+py-minimal-server:
+	$(PYTHON) examples/py/10_minimal_server.py $(PY_CM_PORT)
+
+py-minimal-client:
+	@if [ -z "$(PY_SERVER_IP)" ]; then \
+		echo "PY_SERVER_IP is required (e.g., make py-minimal-client PY_SERVER_IP=1.2.3.4)"; \
+		exit 1; \
+	fi
+	$(PYTHON) examples/py/11_minimal_client.py $(PY_SERVER_IP) $(PY_CM_PORT)
+
 .PHONY: tests test minimal minimal_server minimal_client rdma_bulk_server rdma_bulk_client tcp_server tcp_client \
-	perf-compare lab-capture lab-capture-live lab-capture-manual lab-capture-live-manual lab-deploy lab-clean
+	perf-compare lab-capture lab-capture-live lab-capture-manual lab-capture-live-manual lab-deploy lab-clean \
+	py-list-devices py-query-ports py-minimal-server py-minimal-client py-tests

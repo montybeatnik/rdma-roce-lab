@@ -22,13 +22,30 @@ source .venv/bin/activate
 - `examples/py/01_query_ports.py` prints a device's port attributes.
 - `examples/py/02_rc_write_skeleton.py` sets up PD/CQ/MR/QP and shows a
   two-host RDMA WRITE skeleton.
+- `examples/py/10_minimal_server.py` and `examples/py/11_minimal_client.py`
+  mirror the minimal C flow using RDMA CM + private_data.
 
 ## Example
 ```bash
 python3 examples/py/00_list_devices.py
 python3 examples/py/01_query_ports.py rxe0 1
 python3 examples/py/02_rc_write_skeleton.py rxe0 1
+python3 examples/py/10_minimal_server.py 7471
+python3 examples/py/11_minimal_client.py <SERVER_IP> 7471
 ```
+
+## Make targets (optional)
+```bash
+make py-list-devices
+make py-query-ports PY_DEV=rxe0 PY_PORT=1
+make py-minimal-server PY_CM_PORT=7471
+make py-minimal-client PY_SERVER_IP=<SERVER_IP> PY_CM_PORT=7471
+```
+
+## RDMA CM note
+The minimal server/client uses RDMA CM for connection setup and uses
+`private_data` to pass the remote buffer info (addr, rkey, len), just like the
+C minimal example.
 
 ## Why start here?
 Before we post work requests, we need a reliable mental model of the device and

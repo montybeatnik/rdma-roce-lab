@@ -2,10 +2,29 @@
 import sys
 
 try:
-    from pyverbs.device import Context, DeviceList
+    import pyverbs.device as pv_dev
+    from pyverbs.device import Context
 except ImportError as exc:
     print("pyverbs is not installed. Try: sudo apt install -y python3-pyverbs")
     raise SystemExit(1) from exc
+
+
+def _list_devices():
+    if hasattr(pv_dev, "DeviceList"):
+        return pv_dev.DeviceList()
+    if hasattr(pv_dev, "get_device_list"):
+        return pv_dev.get_device_list()
+    raise RuntimeError("pyverbs.device has no DeviceList or get_device_list")
+
+
+def _device_name(dev):
+    if hasattr(dev, "name"):
+        val = dev.name
+        return val() if callable(val) else val
+    if hasattr(dev, "device_name"):
+        val = dev.device_name
+        return val() if callable(val) else val
+    return str(dev)
 
 
 def main() -> int:
@@ -15,8 +34,8 @@ def main() -> int:
     dev_name = sys.argv[1]
     port = int(sys.argv[2])
 
-    dev_list = DeviceList()
-    dev = next((d for d in dev_list if d.name == dev_name), None)
+    dev_list = _list_devices()
+    dev = next((d for d in dev_list if _device_name(d) == dev_name), None)
     if dev is None:
         print(f"Device '{dev_name}' not found.")
         return 1

@@ -66,6 +66,14 @@ bash scripts/guide/00_setup_venv.sh
 source .venv/bin/activate
 ```
 
+Python examples:
+```bash
+make py-list-devices
+make py-query-ports PY_DEV=rxe0 PY_PORT=1
+make py-minimal-server PY_CM_PORT=7471
+make py-minimal-client PY_SERVER_IP=<SERVER_IP> PY_CM_PORT=7471
+```
+
 Run (WRITE + READ):
 - Server VM:
 ```bash
@@ -119,7 +127,7 @@ it is usually the setup, not the verbs. (Usually.)
 - Follow the guided scripts: `docs/guide-scripts.md`
 - Tune and choose verbs: `docs/tuning.md`, `docs/verbs-choices.md`
 - Explore use-cases: `docs/ai-ml-use-cases.md`
-- Run tests: `make tests`
+- Run tests: `make tests` (C) and `make py-tests` (Python)
 - Capture traffic: `scripts/lab_capture.sh`
 - Python quick sample: `examples/py/README.md`
 

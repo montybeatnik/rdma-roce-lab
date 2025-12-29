@@ -20,6 +20,19 @@ This runs `tests/test_run_integration.sh` which:
 
 If no RDMA device is present, the integration test will skip.
 
+## Python compatibility tests
+These validate the pyverbs compatibility helpers without needing RDMA hardware.
+
+Install pytest:
+```bash
+python -m pip install pytest
+```
+
+Run:
+```bash
+make py-tests
+```
+
 ## Navigation
 - Previous: [AI/ML use cases](ai-ml-use-cases.md)
 - Next: [Blog post ideas](blog-post-ideas.md)
