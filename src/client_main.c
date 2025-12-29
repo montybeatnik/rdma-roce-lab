@@ -19,8 +19,8 @@
  */
 
 #include <stdio.h>
-#include <string.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "common.h"
 #include "rdma_builders.h"
@@ -41,83 +41,88 @@
  *   int (see return statements).
  */
 
-int main(int argc, char **argv) {
-  if (argc < 3) {
-    fprintf(stderr, "Usage: %s <server-ip> <port>\n", argv[0]);
-    return 1;
-  }
-  const char *ip = argv[1];
-  const char *port = argv[2];
-  const char *src_ip = getenv("RDMA_SRC_IP");
-  uint8_t initiator_depth = 1;
-  uint8_t responder_resources = 1;
-  const char *init_env = getenv("RDMA_INITIATOR_DEPTH");
-  const char *resp_env = getenv("RDMA_RESPONDER_RESOURCES");
-  if (init_env && *init_env)
-    initiator_depth = (uint8_t)strtoul(init_env, NULL, 10);
-  if (resp_env && *resp_env)
-    responder_resources = (uint8_t)strtoul(resp_env, NULL, 10);
+int main(int argc, char **argv)
+{
+    if (argc < 3)
+    {
+        fprintf(stderr, "Usage: %s <server-ip> <port>\n", argv[0]);
+        return 1;
+    }
+    const char *ip = argv[1];
+    const char *port = argv[2];
+    const char *src_ip = getenv("RDMA_SRC_IP");
+    uint8_t initiator_depth = 1;
+    uint8_t responder_resources = 1;
+    const char *init_env = getenv("RDMA_INITIATOR_DEPTH");
+    const char *resp_env = getenv("RDMA_RESPONDER_RESOURCES");
+    if (init_env && *init_env)
+        initiator_depth = (uint8_t)strtoul(init_env, NULL, 10);
+    if (resp_env && *resp_env)
+        responder_resources = (uint8_t)strtoul(resp_env, NULL, 10);
 
-  rdma_ctx c = {0}; // initialize RDMA context to zero values. 
-  LOG("Create CM channel + ID + connect");
+    rdma_ctx c = {0}; // initialize RDMA context to zero values.
+    LOG("Create CM channel + ID + connect");
 
-  cm_create_channel_and_id(&c);
-  CHECK(cm_client_resolve(&c, ip, port, src_ip), "resolve");
+    cm_create_channel_and_id(&c);
+    CHECK(cm_client_resolve(&c, ip, port, src_ip), "resolve");
 
-  // Build PD/CQ/QP **before** rdma_connect
-  LOG("Build PD/CQ/QP");
-  build_pd_cq_qp(&c, IBV_QPT_RC, 64, 32, 32, 1);
+    // Build PD/CQ/QP **before** rdma_connect
+    LOG("Build PD/CQ/QP");
+    build_pd_cq_qp(&c, IBV_QPT_RC, 64, 32, 32, 1);
 
-  // Now connect (tiny credits for rxe)
-  CHECK(cm_client_connect_only(&c, initiator_depth, responder_resources),
-        "rdma_connect");
+    // Now connect (tiny credits for rxe)
+    CHECK(cm_client_connect_only(&c, initiator_depth, responder_resources), "rdma_connect");
 
-  // Wait for CONNECTED (handles CONNECT_RESPONSE -> ESTABLISHED, and returns
-  // conn params)
-  struct rdma_conn_param connp = {0};
-  CHECK(cm_wait_connected(&c, &connp), "ESTABLISHED");
+    // Wait for CONNECTED (handles CONNECT_RESPONSE -> ESTABLISHED, and returns
+    // conn params)
+    struct rdma_conn_param connp = {0};
+    CHECK(cm_wait_connected(&c, &connp), "ESTABLISHED");
 
-  // Extract private_data safely into a local struct
-  struct remote_buf_info info = {0};
-  if (connp.private_data && connp.private_data_len >= sizeof(info)) {
-    memcpy(&info, connp.private_data, sizeof(info));
-  } else {
-    fprintf(stderr, "No or short private_data\n");
-    return 2;
-  }
+    // Extract private_data safely into a local struct
+    struct remote_buf_info info = {0};
+    if (connp.private_data && connp.private_data_len >= sizeof(info))
+    {
+        memcpy(&info, connp.private_data, sizeof(info));
+    }
+    else
+    {
+        fprintf(stderr, "No or short private_data\n");
+        return 2;
+    }
 
-  unpack_remote_buf_info(&info, &c.remote_addr, &c.remote_rkey);
-  LOG("Got remote addr=%#lx rkey=0x%x", (unsigned long)c.remote_addr,
-      c.remote_rkey);
+    unpack_remote_buf_info(&info, &c.remote_addr, &c.remote_rkey);
+    LOG("Got remote addr=%#lx rkey=0x%x", (unsigned long)c.remote_addr, c.remote_rkey);
 
-  LOG("Register local tx/rx");
-  alloc_and_reg(&c, &c.buf_tx, &c.mr_tx, BUF_SZ, IBV_ACCESS_LOCAL_WRITE);
-  alloc_and_reg(&c, &c.buf_rx, &c.mr_rx, BUF_SZ, IBV_ACCESS_LOCAL_WRITE);
-  strcpy((char *)c.buf_tx, "client-wrote-this");
+    LOG("Register local tx/rx");
+    alloc_and_reg(&c, &c.buf_tx, &c.mr_tx, BUF_SZ, IBV_ACCESS_LOCAL_WRITE);
+    alloc_and_reg(&c, &c.buf_rx, &c.mr_rx, BUF_SZ, IBV_ACCESS_LOCAL_WRITE);
+    strcpy((char *)c.buf_tx, "client-wrote-this");
 
-  LOG("Post RDMA_WRITE");
-  CHECK(post_write(c.qp, c.mr_tx, c.buf_tx, c.remote_addr, c.remote_rkey,
-                   strlen((char *)c.buf_tx) + 1, 1, 1),
-        "post_write");
-  struct ibv_wc wc;
-  CHECK(poll_one(c.cq, &wc), "poll write");
-  LOG("WRITE complete");
+    LOG("Post RDMA_WRITE");
+    CHECK(post_write(c.qp, c.mr_tx, c.buf_tx, c.remote_addr, c.remote_rkey, strlen((char *)c.buf_tx) + 1, 1, 1),
+          "post_write");
+    struct ibv_wc wc;
+    CHECK(poll_one(c.cq, &wc), "poll write");
+    LOG("WRITE complete");
 
-  LOG("Post RDMA_READ");
-  CHECK(post_read(c.qp, c.mr_rx, c.buf_rx, c.remote_addr, c.remote_rkey, BUF_SZ,
-                  2, 1),
-        "post_read");
-  CHECK(poll_one(c.cq, &wc), "poll read");
-  LOG("READ complete: '%s'", (char *)c.buf_rx);
+    LOG("Post RDMA_READ");
+    CHECK(post_read(c.qp, c.mr_rx, c.buf_rx, c.remote_addr, c.remote_rkey, BUF_SZ, 2, 1), "post_read");
+    CHECK(poll_one(c.cq, &wc), "poll read");
+    LOG("READ complete: '%s'", (char *)c.buf_rx);
 
-  rdma_disconnect(c.id);
+    rdma_disconnect(c.id);
 
-  mem_free_all(&c);
-  if (c.qp) rdma_destroy_qp(c.id);
-  if (c.cq) ibv_destroy_cq(c.cq);
-  if (c.pd) ibv_dealloc_pd(c.pd);
-  if (c.id) rdma_destroy_id(c.id);
-  if (c.ec) rdma_destroy_event_channel(c.ec);
-  LOG("Done");
-  return 0;
+    mem_free_all(&c);
+    if (c.qp)
+        rdma_destroy_qp(c.id);
+    if (c.cq)
+        ibv_destroy_cq(c.cq);
+    if (c.pd)
+        ibv_dealloc_pd(c.pd);
+    if (c.id)
+        rdma_destroy_id(c.id);
+    if (c.ec)
+        rdma_destroy_event_channel(c.ec);
+    LOG("Done");
+    return 0;
 }
