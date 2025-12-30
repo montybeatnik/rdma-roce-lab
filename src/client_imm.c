@@ -60,24 +60,31 @@ int main(int argc, char **argv)
 
     // --- connect & setup (new flow) ---
     rdma_ctx c = {0};
-    LOG("Create CM channel + ID + connect");
+    LOGF("SLOW", "create CM channel + ID");
     cm_create_channel_and_id(&c);
 
     // 1) Resolve first (ADDR/ROUTE)
+    LOGF("SLOW", "resolve %s:%s", ip, port);
+    LOGF("SLOW", "  src_ip=%s", src_ip ? src_ip : "default");
     CHECK(cm_client_resolve(&c, ip, port, src_ip), "resolve");
 
     // 2) Build PD/CQ/QP BEFORE rdma_connect
-    LOG("Build PD/CQ/QP");
+    LOGF("SLOW", "build PD/CQ/QP");
     build_pd_cq_qp(&c, IBV_QPT_RC, 64, 32, 32, 1);
 
     // 3) rdma_connect with tiny credits (SoftRoCE-friendly)
+    LOGF("SLOW", "rdma_connect");
+    LOGF("SLOW", "  initiator_depth=%u", initiator_depth);
+    LOGF("SLOW", "  responder_resources=%u", responder_resources);
     CHECK(cm_client_connect_only(&c, initiator_depth, responder_resources), "rdma_connect");
 
     // 4) Wait for ESTABLISHED and pull private_data safely
     struct rdma_conn_param connp = {0};
+    LOGF("SLOW", "wait ESTABLISHED");
     CHECK(cm_wait_connected(&c, &connp), "ESTABLISHED");
 
     struct remote_buf_info info = {0};
+    LOGF("SLOW", "read private_data (remote addr/rkey)");
     if (connp.private_data && connp.private_data_len >= sizeof(info))
     {
         memcpy(&info, connp.private_data, sizeof(info));
@@ -88,9 +95,10 @@ int main(int argc, char **argv)
         return 2;
     }
     unpack_remote_buf_info(&info, &c.remote_addr, &c.remote_rkey);
-    LOG("Got remote addr=%#lx rkey=0x%x", (unsigned long)c.remote_addr, c.remote_rkey);
+    LOGF("SLOW", "remote addr=%#lx", (unsigned long)c.remote_addr);
+    LOGF("SLOW", "remote rkey=0x%x", c.remote_rkey);
 
-    LOG("Register local tx");
+    LOGF("FAST", "register local TX");
     alloc_and_reg(&c, &c.buf_tx, &c.mr_tx, BUF_SZ, IBV_ACCESS_LOCAL_WRITE);
     strcpy((char *)c.buf_tx, "client-wrote-with-imm");
 
@@ -109,12 +117,15 @@ int main(int argc, char **argv)
                        *bad = NULL;
     dump_sge(&s, "WRITE_WITH_IMM");
     dump_wr_rdma(&wr);
-    LOG("Post RDMA_WRITE_WITH_IMM (imm=host %u / net 0x%x)", ntohl(imm), imm);
+    LOGF("DATA", "post RDMA_WRITE_WITH_IMM len=%u", s.length);
+    LOGF("DATA", "  imm_data host=%u", ntohl(imm));
+    LOGF("DATA", "  imm_data net=0x%x", imm);
     CHECK(/* Post a SEND/WRITE/READ WQE to SQ */ ibv_post_send(c.qp, &wr, &bad), "ibv_post_send write_with_imm");
 
     struct ibv_wc wc;
+    LOGF("DATA", "poll RDMA_WRITE_WITH_IMM");
     CHECK(poll_one(c.cq, &wc), "poll write_with_imm");
-    LOG("WRITE_WITH_IMM completed");
+    LOGF("DATA", "RDMA_WRITE_WITH_IMM completed");
 
     rdma_disconnect(c.id);
 

@@ -12,7 +12,7 @@ PY_SERVER_IP?=
 SRC_DIR=src
 BIN_DIR=.
 
-SRCS=$(SRC_DIR)/rdma_cm_helpers.c $(SRC_DIR)/rdma_builders.c $(SRC_DIR)/rdma_mem.c $(SRC_DIR)/rdma_ops.c
+SRCS=$(SRC_DIR)/common.c $(SRC_DIR)/rdma_cm_helpers.c $(SRC_DIR)/rdma_builders.c $(SRC_DIR)/rdma_mem.c $(SRC_DIR)/rdma_ops.c
 HDRS=$(SRC_DIR)/common.h $(SRC_DIR)/rdma_ctx.h $(SRC_DIR)/rdma_cm_helpers.h $(SRC_DIR)/rdma_builders.h $(SRC_DIR)/rdma_mem.h $(SRC_DIR)/rdma_ops.h
 
 all: rdma_server rdma_client rdma_server_imm rdma_client_imm

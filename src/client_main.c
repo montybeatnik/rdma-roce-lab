@@ -61,25 +61,31 @@ int main(int argc, char **argv)
         responder_resources = (uint8_t)strtoul(resp_env, NULL, 10);
 
     rdma_ctx c = {0}; // initialize RDMA context to zero values.
-    LOG("Create CM channel + ID + connect");
-
+    LOGF("SLOW", "create CM channel + ID");
     cm_create_channel_and_id(&c);
+    LOGF("SLOW", "resolve %s:%s", ip, port);
+    LOGF("SLOW", "  src_ip=%s", src_ip ? src_ip : "default");
     CHECK(cm_client_resolve(&c, ip, port, src_ip), "resolve");
 
     // Build PD/CQ/QP **before** rdma_connect
-    LOG("Build PD/CQ/QP");
+    LOGF("SLOW", "build PD/CQ/QP");
     build_pd_cq_qp(&c, IBV_QPT_RC, 64, 32, 32, 1);
 
     // Now connect (tiny credits for rxe)
+    LOGF("SLOW", "rdma_connect");
+    LOGF("SLOW", "  initiator_depth=%u", initiator_depth);
+    LOGF("SLOW", "  responder_resources=%u", responder_resources);
     CHECK(cm_client_connect_only(&c, initiator_depth, responder_resources), "rdma_connect");
 
     // Wait for CONNECTED (handles CONNECT_RESPONSE -> ESTABLISHED, and returns
     // conn params)
     struct rdma_conn_param connp = {0};
+    LOGF("SLOW", "wait ESTABLISHED");
     CHECK(cm_wait_connected(&c, &connp), "ESTABLISHED");
 
     // Extract private_data safely into a local struct
     struct remote_buf_info info = {0};
+    LOGF("SLOW", "read private_data (remote addr/rkey)");
     if (connp.private_data && connp.private_data_len >= sizeof(info))
     {
         memcpy(&info, connp.private_data, sizeof(info));
@@ -91,24 +97,27 @@ int main(int argc, char **argv)
     }
 
     unpack_remote_buf_info(&info, &c.remote_addr, &c.remote_rkey);
-    LOG("Got remote addr=%#lx rkey=0x%x", (unsigned long)c.remote_addr, c.remote_rkey);
+    LOGF("SLOW", "remote addr=%#lx", (unsigned long)c.remote_addr);
+    LOGF("SLOW", "remote rkey=0x%x", c.remote_rkey);
 
-    LOG("Register local tx/rx");
+    LOGF("FAST", "register local TX/RX");
     alloc_and_reg(&c, &c.buf_tx, &c.mr_tx, BUF_SZ, IBV_ACCESS_LOCAL_WRITE);
     alloc_and_reg(&c, &c.buf_rx, &c.mr_rx, BUF_SZ, IBV_ACCESS_LOCAL_WRITE);
     strcpy((char *)c.buf_tx, "client-wrote-this");
 
-    LOG("Post RDMA_WRITE");
+    LOGF("DATA", "post RDMA_WRITE len=%zu", strlen((char *)c.buf_tx) + 1);
     CHECK(post_write(c.qp, c.mr_tx, c.buf_tx, c.remote_addr, c.remote_rkey, strlen((char *)c.buf_tx) + 1, 1, 1),
           "post_write");
     struct ibv_wc wc;
+    LOGF("DATA", "poll RDMA_WRITE");
     CHECK(poll_one(c.cq, &wc), "poll write");
-    LOG("WRITE complete");
+    LOGF("DATA", "RDMA_WRITE complete");
 
-    LOG("Post RDMA_READ");
+    LOGF("DATA", "post RDMA_READ len=%u", (unsigned)BUF_SZ);
     CHECK(post_read(c.qp, c.mr_rx, c.buf_rx, c.remote_addr, c.remote_rkey, BUF_SZ, 2, 1), "post_read");
+    LOGF("DATA", "poll RDMA_READ");
     CHECK(poll_one(c.cq, &wc), "poll read");
-    LOG("READ complete: '%s'", (char *)c.buf_rx);
+    LOGF("DATA", "RDMA_READ complete: '%s'", (char *)c.buf_rx);
 
     rdma_disconnect(c.id);
 

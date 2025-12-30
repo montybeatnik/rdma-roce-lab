@@ -21,8 +21,11 @@
 #pragma once
 #include <arpa/inet.h>
 #include <infiniband/verbs.h>
+#include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <sys/time.h>
+#include <time.h>
 #include <unistd.h>
 
 struct remote_buf_info
@@ -58,14 +61,42 @@ static inline void unpack_remote_buf_info(const struct remote_buf_info *info, ui
         *rkey = ntohl(info->rkey);
 }
 
+extern unsigned long g_log_step;
+
+static inline void logf_impl(const char *func, const char *tag, const char *fmt, ...)
+{
+    struct timeval tv;
+    struct tm tm;
+    char ts[32];
+
+    gettimeofday(&tv, NULL);
+    localtime_r(&tv.tv_sec, &tm);
+    snprintf(ts, sizeof(ts), "%02d:%02d:%02d.%03ld", tm.tm_hour, tm.tm_min, tm.tm_sec, tv.tv_usec / 1000);
+
+    fprintf(stderr, "[%s #%04lu %s] %-5s ", ts, ++g_log_step, func, tag);
+
+    va_list ap;
+    va_start(ap, fmt);
+    vfprintf(stderr, fmt, ap);
+    va_end(ap);
+    fputc('\n', stderr);
+}
+
 #ifdef RDMA_VERBOSE
-#define LOG(fmt, ...) fprintf(stderr, "[%s] " fmt "\n", __func__, ##__VA_ARGS__)
+#define LOG(fmt, ...) logf_impl(__func__, "INFO", fmt, ##__VA_ARGS__)
+#define LOGF(tag, fmt, ...) logf_impl(__func__, tag, fmt, ##__VA_ARGS__)
 #else
 #define LOG(fmt, ...)                                                                                                  \
     do                                                                                                                 \
     {                                                                                                                  \
         if (0)                                                                                                         \
-            fprintf(stderr, "[%s] " fmt "\n", __func__, ##__VA_ARGS__);                                                \
+            logf_impl(__func__, "INFO", fmt, ##__VA_ARGS__);                                                           \
+    } while (0)
+#define LOGF(tag, fmt, ...)                                                                                            \
+    do                                                                                                                 \
+    {                                                                                                                  \
+        if (0)                                                                                                         \
+            logf_impl(__func__, tag, fmt, ##__VA_ARGS__);                                                              \
     } while (0)
 #endif
 #define CHECK(x, msg)                                                                                                  \

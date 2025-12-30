@@ -44,53 +44,58 @@ int main(int argc, char **argv)
     const char *bind_ip = getenv("RDMA_BIND_IP");
 
     rdma_ctx c = {0};
-    LOG("Create CM channel + listen");
+    LOGF("SLOW", "create CM channel + listen");
     cm_create_channel_and_id(&c);
     cm_server_listen(&c, bind_ip, port);
 
-    LOG("Wait for CONNECT_REQUEST");
+    LOGF("SLOW", "wait CONNECT_REQUEST");
     struct rdma_cm_event *ev;
     CHECK(cm_wait_event(&c, RDMA_CM_EVENT_CONNECT_REQUEST, &ev), "CONNECT_REQUEST");
     c.id = ev->id;
     rdma_ack_cm_event(ev);
 
-    LOG("Build PD/CQ/QP");
+    LOGF("SLOW", "build PD/CQ/QP");
     build_pd_cq_qp(&c, IBV_QPT_RC, 64, 32, 32, 1);
 
-    LOG("Register remote-exposed MR");
+    LOGF("SLOW", "register remote-exposed MR");
     alloc_and_reg(&c, &c.buf_remote, &c.mr_remote, BUF_SZ,
                   IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_WRITE);
     strcpy((char *)c.buf_remote, "server-initial");
     dump_mr(c.mr_remote, "server", c.buf_remote, BUF_SZ);
 
     // Post a RECV to receive the Write-With-Immediate notification
-    LOG("Register and post RECV buffer (notification-only)");
+    LOGF("SLOW", "register and post RECV buffer (notification-only)");
     void *rx_note = NULL;
     struct ibv_mr *mr_rx = NULL;
     alloc_and_reg(&c, &rx_note, &mr_rx, 64, IBV_ACCESS_LOCAL_WRITE);
     CHECK(post_recv(c.qp, mr_rx, rx_note, 64, 100), "post_recv");
 
     struct remote_buf_info info = pack_remote_buf_info((uintptr_t)c.buf_remote, c.mr_remote->rkey);
-    LOG("Accept with private_data (addr=%#lx rkey=0x%x)", (unsigned long)(uintptr_t)c.buf_remote, c.mr_remote->rkey);
+    LOGF("SLOW", "accept with private_data");
+    LOGF("SLOW", "  addr=%#lx", (unsigned long)(uintptr_t)c.buf_remote);
+    LOGF("SLOW", "  rkey=0x%x", c.mr_remote->rkey);
     cm_server_accept_with_priv(&c, &info, sizeof(info));
 
+    LOGF("SLOW", "wait ESTABLISHED");
     CHECK(cm_wait_event(&c, RDMA_CM_EVENT_ESTABLISHED, &ev), "ESTABLISHED");
     rdma_ack_cm_event(ev);
     dump_qp(c.qp);
 
-    LOG("Wait for RECV (WRITE_WITH_IMM notification)…");
+    LOGF("FAST", "wait for RECV (WRITE_WITH_IMM notification)");
     struct ibv_wc wc;
     CHECK(poll_one(c.cq, &wc), "poll recv");
     if (wc.opcode == IBV_WC_RECV_RDMA_WITH_IMM || (wc.wc_flags & IBV_WC_WITH_IMM))
     {
-        LOG("Got RECV with IMM: imm_data=0x%x (host=%u)", wc.imm_data, ntohl(wc.imm_data));
+        LOGF("DATA", "got RECV with IMM");
+        LOGF("DATA", "  imm_data net=0x%x", wc.imm_data);
+        LOGF("DATA", "  imm_data host=%u", ntohl(wc.imm_data));
     }
     else
     {
-        LOG("Got RECV without IMM: opcode=%d", wc.opcode);
+        LOGF("DATA", "got RECV without IMM: opcode=%d", wc.opcode);
     }
 
-    LOG("After client's WRITE_WITH_IMM, buf='%s'", (char *)c.buf_remote);
+    LOGF("DATA", "after WRITE_WITH_IMM, buf='%s'", (char *)c.buf_remote);
 
     rdma_disconnect(c.id);
 
