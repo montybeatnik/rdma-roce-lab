@@ -1,1 +1,23 @@
 .venv
+.pytest_cache
+__pycache__/
+*.o
+*.a
+*.so
+*.dylib
+
+# Build outputs
+/rdma_client
+/rdma_server
+/rdma_client_imm
+/rdma_server_imm
+/rdma_bulk_client
+/rdma_bulk_server
+/rdma_min_client
+/rdma_min_server
+/tcp_client
+/tcp_server
+
+# Logs and captures
+*.log
+*.pcap
