@@ -33,3 +33,6 @@ On client VM (use server IP):
 ## Real-world anchor: parameter server
 Treat the server buffer as a "weights" region. The client WRITEs gradients and
 READs back updated weights. The flow is identical; only the payload changes.
+
+## Wireshark captures
+- [on-the-wire](/docs/on-the-wire.md)

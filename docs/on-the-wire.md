@@ -59,4 +59,6 @@ export PATH="/Applications/Wireshark.app/Contents/MacOS:$PATH"
 ```
 # RoCE v2 uses UDP port 4791, so to capture all RoCE packets:
 udp.port == 4791
+# CM MAD packets for setup/teardown 
+infiniband.mad.method == 0x03
 ```

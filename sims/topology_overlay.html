@@ -1,0 +1,744 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Topology Overlay Simulation</title>
+  <link rel="stylesheet" href="shared.css"/>
+  <style>
+    :root{
+      --wrap-max:1200px;
+      --grid-cols:1fr 360px;
+      --canvas-h:580px;
+      --canvas-h-sm:520px;
+    }
+    @media (max-width: 1020px){
+      .grid{grid-template-columns:1fr;}
+      canvas{height:520px;}
+    }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Topology Overlay: Where the Pressure Goes</h1>
+  <p class="sub">
+    Visualize collective traffic overlays on two simplified topologies:
+    <strong>Leaf–Spine</strong> vs <strong>Rail-Oriented (dual-plane)</strong>.
+    This pass renders <strong>servers with 4 GPU ports</strong>, and maps GPU<i>n</i> → Leaf<i>n</i>.
+  </p>
+
+  <div class="grid">
+    <div class="card">
+      <div class="canvasWrap"><canvas id="c"></canvas></div>
+    </div>
+
+    <div class="card controls">
+      <div class="ctl">
+        <label><span>Topology</span><span class="pill" id="topoLabel">Leaf–Spine</span></label>
+        <div class="tog">
+          <div class="btn primary" id="btnLeafSpine">Leaf–Spine</div>
+          <div class="btn" id="btnRails">Rail-Oriented</div>
+        </div>
+        <div class="note">
+          Leaf–Spine shows shared aggregation pressure.<br/>
+          Rail-Oriented shows how separation can reduce contention in hotspots.
+        </div>
+      </div>
+
+      <div class="ctl">
+        <label><span>Traffic Pattern</span><span class="pill" id="patternLabel">Fan-in Burst</span></label>
+        <div class="tog">
+          <div class="btn primary" id="patFanIn">Fan-in Burst</div>
+          <div class="btn" id="patAllToAll">All-to-All</div>
+          <div class="btn" id="patIncAst">Inc-AST (Staggered)</div>
+        </div>
+        <div class="note">Pick patterns that match your narration in Video 7.</div>
+      </div>
+
+      <div class="ctl">
+        <label><span>Total GPUs</span><strong><span id="nVal">12</span></strong></label>
+        <input id="n" type="range" min="8" max="24" step="1" value="12"/>
+        <div class="note">
+          GPUs are packed into servers (4 per server). GPU1→Leaf1, GPU2→Leaf2, GPU3→Leaf3, GPU4→Leaf4.
+        </div>
+      </div>
+
+      <div class="ctl">
+        <label><span>Intensity</span><strong><span id="intVal">1.10</span></strong></label>
+        <input id="intensity" type="range" min="0.40" max="1.80" step="0.05" value="1.10"/>
+      </div>
+
+      <div class="ctl">
+        <label><span>Hotspot Sensitivity</span><strong><span id="hotVal">0.65</span></strong></label>
+        <input id="hotspot" type="range" min="0.20" max="0.95" step="0.05" value="0.65"/>
+        <div class="note">Higher = links “heat up” faster (great for demos).</div>
+      </div>
+
+      <div class="ctl">
+        <label><span>Presets</span><span class="pill">One-click scenes</span></label>
+        <div class="tog">
+          <div class="btn" id="pCalm">Calm</div>
+          <div class="btn primary" id="pHot">Hotspot</div>
+          <div class="btn" id="pCompare">Compare</div>
+          <div class="btn" id="demo">Demo Mode</div>
+          <div class="btn danger" id="reset">Reset</div>
+        </div>
+        <div class="kv">
+          <span>Instant “pressure”</span><strong><span id="pressureNow">0%</span></strong>
+          <span>Hottest link</span><strong><span id="hottestNow">0%</span></strong>
+        </div>
+        <div class="note">
+          Record tip: use <strong>Compare</strong> then click topology buttons once to show the difference.
+        </div>
+      </div>
+
+      <div class="ctl">
+        <div class="tog">
+          <div class="btn primary" id="toggleRun">Pause</div>
+        </div>
+        <div class="note">
+          In Keynote: insert recorded MP4, set <strong>Autoplay</strong> and optionally <strong>Loop</strong>.
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="shared.js"></script>
+<script>
+(() => {
+  const { canvas, ctx } = SimUI.setupCanvas('c');
+
+  // UI
+  const el = {
+    topoLabel: document.getElementById('topoLabel'),
+    btnLeafSpine: document.getElementById('btnLeafSpine'),
+    btnRails: document.getElementById('btnRails'),
+
+    patternLabel: document.getElementById('patternLabel'),
+    patFanIn: document.getElementById('patFanIn'),
+    patAllToAll: document.getElementById('patAllToAll'),
+    patIncAst: document.getElementById('patIncAst'),
+
+    n: document.getElementById('n'),
+    intensity: document.getElementById('intensity'),
+    hotspot: document.getElementById('hotspot'),
+    nVal: document.getElementById('nVal'),
+    intVal: document.getElementById('intVal'),
+    hotVal: document.getElementById('hotVal'),
+
+    pCalm: document.getElementById('pCalm'),
+    pHot: document.getElementById('pHot'),
+    pCompare: document.getElementById('pCompare'),
+    demo: document.getElementById('demo'),
+    reset: document.getElementById('reset'),
+    toggleRun: document.getElementById('toggleRun'),
+
+    pressureNow: document.getElementById('pressureNow'),
+    hottestNow: document.getElementById('hottestNow'),
+  };
+
+  const bindRange = SimUI.bindRange;
+  bindRange(el.n, el.nVal, v=>String(v));
+  bindRange(el.intensity, el.intVal, v=>Number(v).toFixed(2));
+  bindRange(el.hotspot, el.hotVal, v=>Number(v).toFixed(2));
+
+  let running = true;
+  el.toggleRun.onclick = ()=>{ running = !running; el.toggleRun.textContent = running ? 'Pause' : 'Play'; };
+
+  // State
+  let topo = 'leafspine';    // leafspine | rails
+  let pattern = 'fanin';     // fanin | alltoall | incast
+  let t = 0;
+
+  // Graph primitives
+  let nodes = [];        // switches + gpu nodes (servers tracked separately)
+  let servers = [];      // {id,x,y,w,h,label,gpuIds[]}
+  let links = [];        // {a,b,heat,cap}
+  let particles = [];    // {a,b,p,x,y,speed}
+
+  // NVIDIA-ish mental model
+  const LEAF_COUNT = 4;
+  const GPUS_PER_SERVER = 4;
+
+  // Demo timers
+  let demoTimers = [];
+  let demoRunning = false;
+
+  function clearDemo(){
+    for(const id of demoTimers) clearTimeout(id);
+    demoTimers = [];
+    demoRunning = false;
+    el.demo.textContent = 'Demo Mode';
+  }
+
+  // Helpers
+  const rnd = ()=> Math.random();
+  const clamp = (x,a,b)=> Math.max(a, Math.min(b,x));
+  const lerp = (a,b,p)=> a + (b-a)*p;
+
+  function roundedRect(x,y,w,h,r){
+    ctx.beginPath();
+    ctx.moveTo(x+r,y);
+    ctx.arcTo(x+w,y, x+w,y+h, r);
+    ctx.arcTo(x+w,y+h, x,y+h, r);
+    ctx.arcTo(x,y+h, x,y, r);
+    ctx.arcTo(x,y, x+w,y, r);
+    ctx.closePath();
+  }
+  function text(s,x,y,size=12,color='rgba(167,179,197,0.9)',align='left'){
+    ctx.save();
+    ctx.font = `${size}px system-ui,-apple-system,Segoe UI,Roboto,Arial`;
+    ctx.fillStyle = color;
+    ctx.textAlign = align;
+    ctx.fillText(s,x,y);
+    ctx.restore();
+  }
+
+  function setTopo(next){
+    topo = next;
+    el.topoLabel.textContent = (topo === 'leafspine') ? 'Leaf–Spine' : 'Rail-Oriented';
+    el.btnLeafSpine.classList.toggle('primary', topo === 'leafspine');
+    el.btnRails.classList.toggle('primary', topo === 'rails');
+    rebuild();
+  }
+  function setPattern(next){
+    pattern = next;
+    el.patternLabel.textContent = (pattern === 'fanin') ? 'Fan-in Burst' :
+                                  (pattern === 'alltoall') ? 'All-to-All' : 'Inc-AST (Staggered)';
+    el.patFanIn.classList.toggle('primary', pattern === 'fanin');
+    el.patAllToAll.classList.toggle('primary', pattern === 'alltoall');
+    el.patIncAst.classList.toggle('primary', pattern === 'incast');
+    resetFlows();
+  }
+
+  el.btnLeafSpine.onclick = ()=> setTopo('leafspine');
+  el.btnRails.onclick = ()=> setTopo('rails');
+  el.patFanIn.onclick = ()=> setPattern('fanin');
+  el.patAllToAll.onclick = ()=> setPattern('alltoall');
+  el.patIncAst.onclick = ()=> setPattern('incast');
+
+  function resetFlows(){
+    particles.length = 0;
+    for(const L of links) L.heat = 0;
+    t = 0;
+  }
+  el.reset.onclick = ()=>{ clearDemo(); resetFlows(); };
+
+  // Build topology graph
+  function rebuild(){
+    particles.length = 0;
+    nodes.length = 0;
+    servers.length = 0;
+    links.length = 0;
+    t = 0;
+
+    const w = canvas.getBoundingClientRect().width;
+    const h = canvas.getBoundingClientRect().height;
+
+    const margin = 34;
+    const topY = 86;
+    const bottomY = h - 86;
+
+    const N = Number(el.n.value);
+    const nServers = Math.max(1, Math.ceil(N / GPUS_PER_SERVER));
+
+    // Leaves
+    const leafY = h * 0.56;
+    const leafStartX = margin + 90;
+    const leafEndX = w - margin - 90;
+
+    for(let i=0;i<LEAF_COUNT;i++){
+      const x = lerp(leafStartX, leafEndX, (LEAF_COUNT===1?0.5:(i/(LEAF_COUNT-1))));
+      nodes.push({ id:`L${i}`, x, y:leafY, type:'leaf', label:`Leaf ${i+1}` });
+    }
+
+    // Spines or Rails
+    const spineY = topY + 40;
+    if (topo === 'leafspine'){
+      const nSpines = 3;
+      const spStartX = margin + 160;
+      const spEndX = w - margin - 160;
+      for(let i=0;i<nSpines;i++){
+        const x = lerp(spStartX, spEndX, (nSpines===1?0.5:(i/(nSpines-1))));
+        nodes.push({ id:`S${i}`, x, y:spineY, type:'spine', label:`Spine ${i+1}` });
+      }
+    } else {
+      const aX = w*0.38;
+      const bX = w*0.62;
+      nodes.push({ id:`RA`, x:aX, y:spineY, type:'rail', label:`Rail A` });
+      nodes.push({ id:`RB`, x:bX, y:spineY, type:'rail', label:`Rail B` });
+    }
+
+    const leaves = nodes.filter(n=>n.type==='leaf');
+    const spines = nodes.filter(n=>n.type==='spine');
+    const rails  = nodes.filter(n=>n.type==='rail');
+
+    // Servers row
+    const usableW = (w - 2*margin);
+    const maxBoxW = 156;
+    const boxW = Math.min(maxBoxW, Math.max(126, (usableW / nServers) - 12));
+    const boxH = 86;
+
+    const totalRowW = nServers * boxW + (nServers-1) * 14;
+    let startX = (w - totalRowW) / 2;
+    startX = Math.max(margin, startX);
+
+    // GPU ports: at top of each server box
+    const padX = 18;
+    const portYInset = 18;
+
+    let gpuCreated = 0;
+
+    for(let s=0;s<nServers;s++){
+      const x = startX + s*(boxW + 14);
+      const yCenter = bottomY - (boxH/2);
+
+      const sid = `SV${s}`;
+      const label = `Server ${s+1}`;
+      const gpuIds = [];
+
+      const localW = boxW - padX*2;
+      const topBox = (yCenter - boxH/2);
+      const portY = topBox + portYInset;
+
+      for(let g=0; g<GPUS_PER_SERVER; g++){
+        if (gpuCreated >= N) break;
+
+        const gid = `G${s}_${g}`;
+        gpuIds.push(gid);
+
+        const gx = x + padX + (localW * (g/(GPUS_PER_SERVER-1)));
+        const gy = portY;
+
+        nodes.push({
+          id: gid,
+          x: gx,
+          y: gy,
+          type: 'gpu',
+          label: `GPU${g+1}`,
+          server: sid,
+          gpuIndex: g
+        });
+
+        // Link: GPU(g) -> Leaf(g)
+        addLink({id:gid}, {id:`L${g}`}, 1.0);
+
+        gpuCreated++;
+      }
+
+      servers.push({ id:sid, x, y:yCenter, w:boxW, h:boxH, label, gpuIds });
+    }
+
+    // Leaf uplinks
+    if (topo === 'leafspine'){
+      for(const leaf of leaves){
+        for(const spine of spines){
+          addLink(leaf, spine, 1.0);
+        }
+      }
+    } else {
+      for(const leaf of leaves){
+        addLink(leaf, rails[0], 1.0);
+        addLink(leaf, rails[1], 1.0);
+      }
+    }
+  }
+
+  function addLink(a,b,cap){
+    links.push({ a:a.id, b:b.id, heat:0, cap });
+  }
+
+  function nodeById(id){ return nodes.find(n=>n.id===id); }
+  function linkBetween(aId,bId){
+    return links.find(L => (L.a===aId && L.b===bId) || (L.a===bId && L.b===aId));
+  }
+
+  function gpuNodes(){
+    return nodes.filter(n=>n.type==='gpu');
+  }
+
+  // Flow picking
+  function pickFlows(){
+    const gpus = gpuNodes();
+    if (gpus.length < 2) return [];
+
+    let pairs = [];
+    if (pattern === 'fanin'){
+      const target = gpus[Math.floor(gpus.length*0.65)];
+      for(const g of gpus){
+        if (g.id === target.id) continue;
+        pairs.push([g.id, target.id]);
+      }
+    } else if (pattern === 'alltoall'){
+      const k = Math.max(10, Math.floor(gpus.length*1.3));
+      for(let i=0;i<k;i++){
+        let a = gpus[Math.floor(rnd()*gpus.length)].id;
+        let b = gpus[Math.floor(rnd()*gpus.length)].id;
+        if (a===b) { i--; continue; }
+        pairs.push([a,b]);
+      }
+    } else { // incast staggered
+      const target = gpus[Math.floor(gpus.length*0.35)];
+      const waveSize = Math.max(3, Math.floor(gpus.length*0.30));
+      const wave = Math.floor((t % 3.0) / 0.75);
+      for(let i=0;i<waveSize;i++){
+        const idx = (wave*waveSize + i) % gpus.length;
+        const src = gpus[idx];
+        if (src.id === target.id) continue;
+        pairs.push([src.id, target.id]);
+      }
+    }
+    return pairs;
+  }
+
+  function gpuToLeaf(gid){
+    const G = nodeById(gid);
+    if (!G || G.type !== 'gpu') return null;
+    return `L${G.gpuIndex}`;
+  }
+
+  function route(aG, bG){
+    const aL = gpuToLeaf(aG);
+    const bL = gpuToLeaf(bG);
+    if (!aL || !bL) return [aG,bG];
+
+    if (aL === bL){
+      return [aG, aL, bG];
+    }
+
+    if (topo === 'leafspine'){
+      const spines = nodes.filter(n=>n.type==='spine').map(n=>n.id);
+      const pick = spines[(hash(aG + '->' + bG) % spines.length + spines.length) % spines.length];
+      return [aG, aL, pick, bL, bG];
+    } else {
+      const rails = nodes.filter(n=>n.type==='rail').map(n=>n.id);
+      let rail;
+      if (pattern === 'fanin') rail = rails[(hash(aG) % 2 + 2) % 2];
+      else rail = rails[(hash(aG + bG) % 2 + 2) % 2];
+      return [aG, aL, rail, bL, bG];
+    }
+  }
+
+  function hash(s){
+    let h=0;
+    for(let i=0;i<s.length;i++) h = (h*31 + s.charCodeAt(i)) | 0;
+    return h;
+  }
+
+  // Particles
+  function spawnPath(path, intensity){
+    for(let i=0;i<path.length-1;i++){
+      const A = nodeById(path[i]);
+      const B = nodeById(path[i+1]);
+      if (!A || !B) continue;
+
+      const speed = 0.60 + intensity*0.55 + rnd()*0.18;
+      particles.push({ a:A.id, b:B.id, p:0, x:A.x, y:A.y, speed });
+
+      const L = linkBetween(A.id,B.id);
+      if (L) L.heat = clamp(L.heat + 0.018 * intensity * Number(el.hotspot.value), 0, 1);
+    }
+  }
+
+  function step(dt){
+    t += dt;
+    const intensity = Number(el.intensity.value);
+
+    const pairs = pickFlows();
+
+    // Burstiness
+    let burst = 1.0;
+    if (pattern === 'fanin'){
+      const beat = (t % 1.6) / 1.6;
+      const d = Math.abs(beat - 0.22);
+      burst = Math.exp(-(d*d)/(2*0.07*0.07));
+      burst = 0.15 + burst * 1.25;
+    } else if (pattern === 'incast'){
+      burst = 0.55 + 0.55 * Math.sin(t*3.1)*0.5 + 0.25;
+      burst = clamp(burst, 0.25, 1.25);
+    }
+
+    const budget = Math.min(30, Math.floor(pairs.length * intensity * burst));
+    for(let i=0;i<budget;i++){
+      const [a,b] = pairs[i % pairs.length];
+      spawnPath(route(a,b), intensity * burst);
+    }
+
+    // cool links
+    for(const L of links){
+      L.heat = clamp(L.heat * (1 - dt*0.55), 0, 1);
+    }
+
+    // move particles
+    for(let i=particles.length-1;i>=0;i--){
+      const P = particles[i];
+      const A = nodeById(P.a), B = nodeById(P.b);
+      if (!A || !B){ particles.splice(i,1); continue; }
+      P.p += dt * P.speed;
+      if (P.p >= 1){ particles.splice(i,1); continue; }
+      P.x = lerp(A.x,B.x,P.p);
+      P.y = lerp(A.y,B.y,P.p);
+    }
+
+    // stats
+    const hottest = links.reduce((m,L)=> Math.max(m, L.heat), 0);
+    const pressure = clamp((particles.length / 240) + hottest*0.6, 0, 1);
+    el.pressureNow.textContent = `${Math.round(pressure*100)}%`;
+    el.hottestNow.textContent = `${Math.round(hottest*100)}%`;
+  }
+
+  // Render
+  function render(){
+    const w = canvas.getBoundingClientRect().width;
+    const h = canvas.getBoundingClientRect().height;
+    ctx.clearRect(0,0,w,h);
+
+    // grid
+    ctx.save();
+    ctx.strokeStyle='rgba(255,255,255,0.04)';
+    ctx.lineWidth=1;
+    for(let y=40;y<h;y+=40){
+      ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(w,y); ctx.stroke();
+    }
+    ctx.restore();
+
+    text('Overlay flows to reveal hotspots (pressure is structural, not random)', 28, 34, 12, 'rgba(167,179,197,0.92)');
+    text(`${topo === 'leafspine' ? 'Leaf–Spine' : 'Rail-Oriented'} • ${patternLabel()}`, w-28, 34, 12, 'rgba(232,238,247,0.78)', 'right');
+
+    // links (heat)
+    for(const L of links){
+      const A = nodeById(L.a), B = nodeById(L.b);
+      if (!A || !B) continue;
+
+      const heat = L.heat;
+      let col = `rgba(255,255,255,0.08)`;
+      if (heat > 0.70) col = `rgba(255,92,92,0.65)`;
+      else if (heat > 0.40) col = `rgba(255,176,32,0.55)`;
+      else if (heat > 0.18) col = `rgba(77,163,255,0.38)`;
+
+      ctx.save();
+      ctx.strokeStyle = col;
+      ctx.lineWidth = 2 + heat*6;
+      ctx.beginPath();
+      ctx.moveTo(A.x,A.y);
+      ctx.lineTo(B.x,B.y);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // switches
+    for(const N of nodes){
+      if (N.type === 'gpu') continue;
+      drawSwitchNode(N);
+    }
+
+    // servers
+    for(const S of servers){
+      drawServer(S);
+    }
+
+    // particles
+    const heatMax = links.reduce((m,L)=> Math.max(m, L.heat), 0);
+    for(const P of particles){
+      ctx.save();
+      let col = 'rgba(110,231,183,0.75)';
+      if (heatMax > 0.70) col = 'rgba(255,92,92,0.75)';
+      else if (heatMax > 0.40) col = 'rgba(255,176,32,0.75)';
+      else col = 'rgba(77,163,255,0.75)';
+      ctx.fillStyle = col;
+      ctx.beginPath();
+      ctx.arc(P.x,P.y,3.2,0,Math.PI*2);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    drawLegend(w,h);
+  }
+
+  function patternLabel(){
+    return (pattern === 'fanin') ? 'Fan-in Burst' : (pattern === 'alltoall') ? 'All-to-All' : 'Inc-AST (Staggered)';
+  }
+
+  // Leaf tier: green tint, Spine/Rail: blue tint
+  function drawSwitchNode(n){
+    let w=90, h=38, r=12;
+
+    let fill='rgba(255,255,255,0.04)';
+    let stroke='rgba(255,255,255,0.10)';
+    let labelCol='rgba(232,238,247,0.82)';
+
+    if (n.type === 'leaf'){
+      fill = 'rgba(110,231,183,0.08)';
+      stroke = 'rgba(110,231,183,0.22)';
+      labelCol = 'rgba(232,238,247,0.85)';
+    } else if (n.type === 'spine' || n.type === 'rail'){
+      w=106; h=40;
+      fill = 'rgba(77,163,255,0.08)';
+      stroke = 'rgba(77,163,255,0.22)';
+      labelCol = 'rgba(232,238,247,0.85)';
+    }
+
+    ctx.save();
+    roundedRect(n.x - w/2, n.y - h/2, w, h, r);
+    ctx.fillStyle = fill; ctx.fill();
+    ctx.strokeStyle = stroke; ctx.lineWidth = 2; ctx.stroke();
+    ctx.restore();
+
+    text(n.label, n.x, n.y+5, 12, labelCol, 'center');
+  }
+
+  // ✅ Server label at bottom, GPU ports at top
+  function drawServer(S){
+    const top = (S.y - S.h/2);
+    const bottom = top + S.h;
+
+    // server box
+    ctx.save();
+    roundedRect(S.x, top, S.w, S.h, 14);
+    ctx.fillStyle = 'rgba(255,255,255,0.03)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.10)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.restore();
+
+    // server label at the bottom (centered)
+    text(S.label, S.x + (S.w/2), bottom - 10, 12, 'rgba(232,238,247,0.78)', 'center');
+
+    // GPU ports at the top
+    const gpuIds = S.gpuIds;
+
+    const portY = top + 18;   // near top edge
+    const labelY = top + 54;  // GPU labels below ports
+
+    for(let i=0;i<gpuIds.length;i++){
+      const gid = gpuIds[i];
+      const G = nodeById(gid);
+      if (!G) continue;
+
+      // Port circle
+      ctx.save();
+      ctx.fillStyle = 'rgba(77,163,255,0.22)';
+      ctx.strokeStyle = 'rgba(77,163,255,0.38)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(G.x, portY, 7.5, 0, Math.PI*2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+
+      // Port stem downward
+      ctx.save();
+      ctx.strokeStyle = 'rgba(77,163,255,0.30)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(G.x, portY + 8.5);
+      ctx.lineTo(G.x, portY + 16.5);
+      ctx.stroke();
+      ctx.restore();
+
+      // GPU label under port
+      text(G.label, G.x, labelY, 11, 'rgba(167,179,197,0.82)', 'center');
+    }
+  }
+
+  function drawLegend(w,h){
+    const baseX = 28;
+    const baseY = h - 34;
+
+    text('Link heat:', baseX, baseY, 12, 'rgba(167,179,197,0.9)');
+
+    const swY = baseY - 12;
+    const swW = 58;
+    const swH = 14;
+    const gap = 18;
+
+    const x1 = baseX + 84;
+    const x2 = x1 + swW + gap + 42;
+    const x3 = x2 + swW + gap + 42;
+
+    swatch(x1, swY, swW, swH, 'rgba(77,163,255,0.65)', 'warm');
+    swatch(x2, swY, swW, swH, 'rgba(255,176,32,0.65)', 'hot');
+    swatch(x3, swY, swW, swH, 'rgba(255,92,92,0.65)', 'critical');
+  }
+
+  function swatch(x,y,w,h,col,label){
+    ctx.save();
+    ctx.fillStyle = col;
+    roundedRect(x, y, w, h, 7);
+    ctx.fill();
+    ctx.restore();
+    text(label, x + w/2, y + h + 14, 11, 'rgba(167,179,197,0.82)', 'center');
+  }
+
+  // Presets + Demo
+  function applyPreset(p){
+    clearDemo();
+    if (p.topo) setTopo(p.topo);
+    if (p.pattern) setPattern(p.pattern);
+
+    if (p.n != null) el.n.value = p.n;
+    if (p.intensity != null) el.intensity.value = p.intensity;
+    if (p.hotspot != null) el.hotspot.value = p.hotspot;
+
+    el.n.dispatchEvent(new Event('input'));
+    el.intensity.dispatchEvent(new Event('input'));
+    el.hotspot.dispatchEvent(new Event('input'));
+
+    resetFlows();
+    running = true;
+    el.toggleRun.textContent = 'Pause';
+  }
+
+  el.pCalm.onclick = ()=> applyPreset({ pattern:'alltoall', n:12, intensity:0.70, hotspot:0.45 });
+  el.pHot.onclick  = ()=> applyPreset({ pattern:'fanin', n:16, intensity:1.35, hotspot:0.80 });
+  el.pCompare.onclick = ()=> applyPreset({ pattern:'fanin', n:16, intensity:1.20, hotspot:0.75 });
+
+  function runDemo(){
+    if (demoRunning){ clearDemo(); return; }
+    demoRunning = true;
+    el.demo.textContent = 'Stop Demo';
+
+    applyPreset({ topo:'leafspine', pattern:'fanin', n:16, intensity:1.25, hotspot:0.80 });
+
+    demoTimers.push(setTimeout(()=> {
+      setTopo('rails');
+      resetFlows();
+      running = true;
+      el.toggleRun.textContent = 'Pause';
+    }, 9000));
+
+    demoTimers.push(setTimeout(()=> {
+      applyPreset({ topo:'rails', pattern:'alltoall', n:16, intensity:1.00, hotspot:0.55 });
+    }, 18000));
+
+    demoTimers.push(setTimeout(()=> {
+      demoRunning = false;
+      el.demo.textContent = 'Demo Mode';
+    }, 26000));
+  }
+  el.demo.onclick = runDemo;
+
+  // Initialize
+  setTopo('leafspine');
+  setPattern('fanin');
+  rebuild();
+
+  // rebuild when GPU count changes
+  el.n.addEventListener('input', ()=> rebuild());
+
+  // animation loop
+  let lastTs = performance.now();
+  function tick(ts){
+    const dt = Math.min(0.05, (ts-lastTs)/1000);
+    lastTs = ts;
+    if (running) step(dt);
+    render();
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+})();
+</script>
+</body>
+</html>
