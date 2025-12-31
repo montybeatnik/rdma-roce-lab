@@ -1,0 +1,355 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Averages Lie: Utilization vs Spikes</title>
+  <link rel="stylesheet" href="shared.css"/>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Averages Lie: Instantaneous Spikes vs Average Utilization</h1>
+    <p class="sub">
+      This sim shows why “average utilization” can look fine while the network still collapses in short bursts.
+      Record 10–20s clips for Keynote.
+    </p>
+
+    <div class="grid">
+      <div class="card">
+        <div class="canvasWrap">
+          <canvas id="c"></canvas>
+        </div>
+      </div>
+
+      <div class="card controls">
+        <div class="ctl">
+          <label><span>Presets</span><span class="pill">One-click scenes</span></label>
+          <div class="tog">
+            <div class="btn primary" id="pSmooth">Smooth</div>
+            <div class="btn" id="pBursty">Bursty</div>
+            <div class="btn" id="pRunaway">Spiky Stress</div>
+            <div class="btn" id="demo">Demo Mode</div>
+            <div class="btn danger" id="reset">Reset</div>
+          </div>
+          <div class="note">Use <strong>Bursty</strong> to show the illusion: low average, high spikes.</div>
+        </div>
+
+        <div class="ctl">
+          <label><span>Spike Probability</span><strong><span id="spVal">0.10</span></strong></label>
+          <input id="spikeProb" type="range" min="0.01" max="0.35" step="0.01" value="0.10"/>
+        </div>
+
+        <div class="ctl">
+          <label><span>Spike Height</span><strong><span id="shVal">0.95</span></strong></label>
+          <input id="spikeHeight" type="range" min="0.20" max="1.20" step="0.05" value="0.95"/>
+        </div>
+
+        <div class="ctl">
+          <label><span>Baseline Utilization</span><strong><span id="blVal">0.25</span></strong></label>
+          <input id="baseline" type="range" min="0.02" max="0.70" step="0.01" value="0.25"/>
+        </div>
+
+        <div class="ctl">
+          <label><span>Averaging Window (seconds)</span><strong><span id="winVal">4.0</span></strong></label>
+          <input id="windowSec" type="range" min="1.0" max="12.0" step="0.5" value="4.0"/>
+          <div class="note">Longer windows hide spikes more aggressively.</div>
+        </div>
+
+        <div class="ctl">
+          <div class="tog">
+            <div class="btn primary" id="toggleRun">Pause</div>
+          </div>
+
+          <div class="kv">
+            <span>Instant utilization</span><strong><span id="inst">0%</span></strong>
+            <span>Average utilization</span><strong><span id="avg">0%</span></strong>
+            <span>Spikes observed</span><strong><span id="spikes">0</span></strong>
+          </div>
+
+          <div class="note">
+            Presenter line: <em>“The average looks calm — but the real story is in the spikes.”</em>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+<script src="shared.js"></script>
+<script>
+(() => {
+  const { canvas, ctx } = SimUI.setupCanvas('c');
+
+  const el = {
+    pSmooth: document.getElementById('pSmooth'),
+    pBursty: document.getElementById('pBursty'),
+    pRunaway: document.getElementById('pRunaway'),
+    demo: document.getElementById('demo'),
+    reset: document.getElementById('reset'),
+    toggleRun: document.getElementById('toggleRun'),
+
+    spikeProb: document.getElementById('spikeProb'),
+    spikeHeight: document.getElementById('spikeHeight'),
+    baseline: document.getElementById('baseline'),
+    windowSec: document.getElementById('windowSec'),
+
+    spVal: document.getElementById('spVal'),
+    shVal: document.getElementById('shVal'),
+    blVal: document.getElementById('blVal'),
+    winVal: document.getElementById('winVal'),
+
+    inst: document.getElementById('inst'),
+    avg: document.getElementById('avg'),
+    spikes: document.getElementById('spikes'),
+  };
+
+  const bindRange = SimUI.bindRange;
+  bindRange(el.spikeProb, el.spVal, v=>Number(v).toFixed(2));
+  bindRange(el.spikeHeight, el.shVal, v=>Number(v).toFixed(2));
+  bindRange(el.baseline, el.blVal, v=>Number(v).toFixed(2));
+  bindRange(el.windowSec, el.winVal, v=>Number(v).toFixed(1));
+
+  let running = true;
+
+  // History buffers
+  const instHist = [];
+  const avgHist = [];
+  const maxHist = 420;
+
+  function push(arr, v){ arr.push(v); if(arr.length>maxHist) arr.shift(); }
+
+  // Averaging buffer (time window)
+  let sampleBuf = []; // {t, v}
+  let t = 0;
+  let spikeCount = 0;
+
+  function reset(){
+    instHist.length = 0;
+    avgHist.length = 0;
+    sampleBuf = [];
+    t = 0;
+    spikeCount = 0;
+  }
+  el.reset.onclick = reset;
+
+  el.toggleRun.onclick = ()=>{
+    running = !running;
+    el.toggleRun.textContent = running ? 'Pause' : 'Play';
+  };
+
+  // Presets
+  function applyPreset(p){
+    el.spikeProb.value = p.spikeProb;
+    el.spikeHeight.value = p.spikeHeight;
+    el.baseline.value = p.baseline;
+    el.windowSec.value = p.windowSec;
+
+    el.spikeProb.dispatchEvent(new Event('input'));
+    el.spikeHeight.dispatchEvent(new Event('input'));
+    el.baseline.dispatchEvent(new Event('input'));
+    el.windowSec.dispatchEvent(new Event('input'));
+
+    reset();
+    running = true;
+    el.toggleRun.textContent = 'Pause';
+  }
+
+  el.pSmooth.onclick = ()=> applyPreset({ spikeProb:0.03, spikeHeight:0.55, baseline:0.35, windowSec:3.0 });
+  el.pBursty.onclick = ()=> applyPreset({ spikeProb:0.10, spikeHeight:1.05, baseline:0.22, windowSec:5.0 });
+  el.pRunaway.onclick = ()=> applyPreset({ spikeProb:0.18, spikeHeight:1.15, baseline:0.28, windowSec:7.0 });
+
+  // Demo mode (timed scenes)
+  let demoTimers = [];
+  let demoRunning = false;
+
+  function clearDemo(){
+    for(const id of demoTimers) clearTimeout(id);
+    demoTimers = [];
+    demoRunning = false;
+    el.demo.textContent = 'Demo Mode';
+  }
+
+  function runDemo(){
+    if(demoRunning){ clearDemo(); return; }
+    demoRunning = true;
+    el.demo.textContent = 'Stop Demo';
+
+    applyPreset({ spikeProb:0.03, spikeHeight:0.55, baseline:0.35, windowSec:3.0 });
+
+    demoTimers.push(setTimeout(()=> {
+      applyPreset({ spikeProb:0.10, spikeHeight:1.05, baseline:0.22, windowSec:5.0 });
+    }, 8000));
+
+    demoTimers.push(setTimeout(()=> {
+      applyPreset({ spikeProb:0.18, spikeHeight:1.15, baseline:0.28, windowSec:7.0 });
+    }, 16000));
+
+    demoTimers.push(setTimeout(()=> {
+      demoRunning = false;
+      el.demo.textContent = 'Demo Mode';
+    }, 24000));
+  }
+  el.demo.onclick = runDemo;
+
+  // Drawing
+  function roundedRect(x,y,w,h,r){
+    ctx.beginPath();
+    ctx.moveTo(x+r,y);
+    ctx.arcTo(x+w,y, x+w,y+h, r);
+    ctx.arcTo(x+w,y+h, x,y+h, r);
+    ctx.arcTo(x,y+h, x,y, r);
+    ctx.arcTo(x,y, x+w,y, r);
+    ctx.closePath();
+  }
+  function text(s,x,y,size=12,color='rgba(167,179,197,0.9)',align='left'){
+    ctx.save();
+    ctx.font = `${size}px system-ui,-apple-system,Segoe UI,Roboto,Arial`;
+    ctx.fillStyle = color;
+    ctx.textAlign = align;
+    ctx.fillText(s,x,y);
+    ctx.restore();
+  }
+
+  function step(dt){
+    t += dt;
+
+    const spikeProb = Number(el.spikeProb.value);
+    const spikeHeight = Number(el.spikeHeight.value);
+    const baseline = Number(el.baseline.value);
+    const windowSec = Number(el.windowSec.value);
+
+    // Generate instantaneous utilization (0..1.2)
+    let inst = baseline;
+
+    // short spikes (microbursts)
+    if (Math.random() < spikeProb) {
+      inst = Math.min(1.2, spikeHeight);
+      spikeCount++;
+    } else {
+      // small jitter around baseline
+      inst = Math.max(0, baseline + (Math.random()-0.5)*0.04);
+    }
+
+    // Maintain sample buffer for moving average
+    sampleBuf.push({ t, v: inst });
+    const cutoff = t - windowSec;
+    while(sampleBuf.length && sampleBuf[0].t < cutoff) sampleBuf.shift();
+
+    let avg = 0;
+    for(const s of sampleBuf) avg += s.v;
+    avg = sampleBuf.length ? (avg / sampleBuf.length) : inst;
+
+    push(instHist, inst);
+    push(avgHist, avg);
+
+    // UI
+    el.inst.textContent = `${Math.round(inst*100)}%`;
+    el.avg.textContent = `${Math.round(avg*100)}%`;
+    el.spikes.textContent = String(spikeCount);
+  }
+
+  function render(){
+    const w = canvas.getBoundingClientRect().width;
+    const h = canvas.getBoundingClientRect().height;
+    ctx.clearRect(0,0,w,h);
+
+    // grid
+    ctx.save();
+    ctx.strokeStyle='rgba(255,255,255,0.04)';
+    ctx.lineWidth=1;
+    for(let y=40;y<h;y+=40){ ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(w,y); ctx.stroke(); }
+    ctx.restore();
+
+    // Title + subtitle
+    text('Instantaneous spikes can be devastating even when average utilization looks “fine”', 28, 34, 12, 'rgba(167,179,197,0.92)');
+    text('Instant (spiky) vs Average (smoothed)', w-28, 34, 12, 'rgba(232,238,247,0.78)', 'right');
+
+    // Chart area
+    const x = 28, y = 70, cw = w-56, ch = h-120;
+
+    ctx.save();
+    roundedRect(x,y,cw,ch,14);
+    ctx.fillStyle='rgba(255,255,255,0.02)';
+    ctx.fill();
+    ctx.strokeStyle='rgba(255,255,255,0.08)';
+    ctx.stroke();
+    ctx.restore();
+
+    const gx = x+18, gy = y+18, gw = cw-36, gh = ch-36;
+
+    // axis grid
+    ctx.save();
+    ctx.strokeStyle='rgba(255,255,255,0.05)';
+    ctx.lineWidth=1;
+    for(let i=0;i<=5;i++){
+      const yy = gy + (gh*i/5);
+      ctx.beginPath(); ctx.moveTo(gx,yy); ctx.lineTo(gx+gw,yy); ctx.stroke();
+    }
+    ctx.restore();
+
+    // Capacity line at 100%
+    ctx.save();
+    const capY = gy + (1-1.0/1.2)*gh;
+    ctx.strokeStyle='rgba(255,92,92,0.35)';
+    ctx.setLineDash([6,6]);
+    ctx.beginPath(); ctx.moveTo(gx,capY); ctx.lineTo(gx+gw,capY); ctx.stroke();
+    ctx.setLineDash([]);
+    text('capacity', gx+gw-6, capY-6, 11, 'rgba(255,92,92,0.55)', 'right');
+    ctx.restore();
+
+    // Draw instant line (spiky)
+    if(instHist.length>2){
+      ctx.save();
+      ctx.beginPath();
+      for(let i=0;i<instHist.length;i++){
+        const v = instHist[i];
+        const xx = gx + (i/(maxHist-1))*gw;
+        const yy = gy + (1 - (v/1.2))*gh;
+        if(i===0) ctx.moveTo(xx,yy); else ctx.lineTo(xx,yy);
+      }
+      ctx.strokeStyle='rgba(77,163,255,0.85)';
+      ctx.lineWidth=2;
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // Draw average line (smooth)
+    if(avgHist.length>2){
+      ctx.save();
+      ctx.beginPath();
+      for(let i=0;i<avgHist.length;i++){
+        const v = avgHist[i];
+        const xx = gx + (i/(maxHist-1))*gw;
+        const yy = gy + (1 - (v/1.2))*gh;
+        if(i===0) ctx.moveTo(xx,yy); else ctx.lineTo(xx,yy);
+      }
+      ctx.strokeStyle='rgba(110,231,183,0.80)';
+      ctx.lineWidth=2;
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // Labels
+    text('0%', gx, gy+gh+16, 11, 'rgba(167,179,197,0.75)');
+    text('120%', gx, gy+10, 11, 'rgba(167,179,197,0.75)');
+    text('Instant', gx+10, gy+18, 11, 'rgba(77,163,255,0.85)');
+    text('Average', gx+70, gy+18, 11, 'rgba(110,231,183,0.78)');
+  }
+
+  // Main loop
+  let lastTs = performance.now();
+  function tick(ts){
+    const dt = Math.min(0.05,(ts-lastTs)/1000);
+    lastTs = ts;
+    if(running) step(dt);
+    render();
+    requestAnimationFrame(tick);
+  }
+
+  // Initialize
+  applyPreset({ spikeProb:0.10, spikeHeight:1.05, baseline:0.22, windowSec:5.0 });
+  requestAnimationFrame(tick);
+})();
+</script>
+</body>
+</html>

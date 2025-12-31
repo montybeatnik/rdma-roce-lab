@@ -1,0 +1,672 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Microburst Fan-in Queue Simulation</title>
+  <link rel="stylesheet" href="shared.css"/>
+  <style>
+    :root{
+      --grid-cols:1fr 320px;
+      --canvas-h:520px;
+      --canvas-h-sm:460px;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="wrap">
+    <h1>Microburst Fan-in → Queue Fill/Drain</h1>
+    <p class="sub">
+      This sim draws a many-to-one fan-in (synchronized senders) into a single bottleneck/queue and shows brief, intense bursts that are often invisible in coarse averages.
+      Use it to generate consistent visuals for slides (record as MP4/GIF).
+    </p>
+
+    <div class="grid">
+      <div class="card">
+        <div class="canvasWrap">
+          <canvas id="c"></canvas>
+        </div>
+      </div>
+
+      <div class="card controls">
+        <div class="row">
+          <div class="ctl">
+            <label>
+              <span>Mode</span>
+              <span class="pill" id="modeLabel">Synchronized</span>
+            </label>
+            <div class="tog">
+              <div class="btn small primary" id="modeSync">Synchronized</div>
+              <div class="btn small" id="modeRandom">Random</div>
+            </div>
+            <div class="note">
+              <strong>Synchronized</strong> creates microbursts (many senders transmit in tight windows).<br/>
+              <strong>Random</strong> smooths arrivals (baseline comparison).
+            </div>
+          </div>
+
+          <div class="ctl">
+            <label><span>Senders</span><strong><span id="sendersVal">8</span></strong></label>
+            <input id="senders" type="range" min="3" max="16" step="1" value="8" />
+          </div>
+
+          <div class="ctl">
+            <label><span>Burst Tightness (sync only)</span><strong><span id="tightVal">0.18</span></strong></label>
+            <input id="tight" type="range" min="0.05" max="0.45" step="0.01" value="0.18" />
+            <div class="note">Lower = more synchronized (sharper microbursts).</div>
+          </div>
+
+          <div class="ctl">
+            <label><span>Arrival Rate</span><strong><span id="rateVal">1.10</span></strong></label>
+            <input id="arrivalRate" type="range" min="0.30" max="2.00" step="0.05" value="1.10" />
+            <div class="note">Controls how aggressively senders attempt to inject traffic.</div>
+          </div>
+
+          <div class="ctl">
+            <label><span>Drain Capacity</span><strong><span id="drainVal">0.85</span></strong></label>
+            <input id="drainRate" type="range" min="0.30" max="2.00" step="0.05" value="0.85" />
+            <div class="note">Lower drain capacity = easier queue buildup.</div>
+          </div>
+
+          <div class="ctl">
+            <label><span>Queue Size</span><strong><span id="qmaxVal">100</span></strong></label>
+            <input id="qmax" type="range" min="40" max="220" step="10" value="100" />
+          </div>
+
+          <div class="ctl">
+            <div class="tog">
+              <div class="btn primary" id="toggleRun">Pause</div>
+              <div class="btn danger" id="reset">Reset</div>
+            </div>
+
+            <div class="kv">
+              <span>Queue occupancy</span><strong><span id="qOcc">0</span></strong>
+              <span>Queue %</span><strong><span id="qPct">0%</span></strong>
+              <span>Instant arrival</span><strong><span id="arrNow">0.00</span></strong>
+              <span>Instant drain</span><strong><span id="drNow">0.00</span></strong>
+              <span>Avg util (approx)</span><strong><span id="utilNow">0%</span></strong>
+            </div>
+
+            <div class="note">
+              Tip: For a punchy slide clip, use <strong>Synchronized</strong>, 10–12 senders, drain ~0.8, arrival ~1.2, tightness ~0.12.
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script src="shared.js"></script>
+<script>
+(() => {
+  // ---------- Canvas setup ----------
+  const { canvas, ctx } = SimUI.setupCanvas('c');
+
+  // ---------- Controls ----------
+  const el = {
+    modeLabel: document.getElementById('modeLabel'),
+    modeSync: document.getElementById('modeSync'),
+    modeRandom: document.getElementById('modeRandom'),
+    senders: document.getElementById('senders'),
+    sendersVal: document.getElementById('sendersVal'),
+    tight: document.getElementById('tight'),
+    tightVal: document.getElementById('tightVal'),
+    arrivalRate: document.getElementById('arrivalRate'),
+    rateVal: document.getElementById('rateVal'),
+    drainRate: document.getElementById('drainRate'),
+    drainVal: document.getElementById('drainVal'),
+    qmax: document.getElementById('qmax'),
+    qmaxVal: document.getElementById('qmaxVal'),
+    toggleRun: document.getElementById('toggleRun'),
+    reset: document.getElementById('reset'),
+    qOcc: document.getElementById('qOcc'),
+    qPct: document.getElementById('qPct'),
+    arrNow: document.getElementById('arrNow'),
+    drNow: document.getElementById('drNow'),
+    utilNow: document.getElementById('utilNow')
+  };
+
+  let mode = 'sync'; // 'sync' | 'random'
+  let running = true;
+
+  function setMode(newMode) {
+    mode = newMode;
+    el.modeLabel.textContent = newMode === 'sync' ? 'Synchronized' : 'Random';
+    el.modeSync.classList.toggle('primary', newMode === 'sync');
+    el.modeRandom.classList.toggle('primary', newMode === 'random');
+  }
+  el.modeSync.onclick = () => setMode('sync');
+  el.modeRandom.onclick = () => setMode('random');
+
+  const bindRange = SimUI.bindRange;
+  bindRange(el.senders, el.sendersVal, (v) => String(v));
+  bindRange(el.tight, el.tightVal, (v) => Number(v).toFixed(2));
+  bindRange(el.arrivalRate, el.rateVal, (v) => Number(v).toFixed(2));
+  bindRange(el.drainRate, el.drainVal, (v) => Number(v).toFixed(2));
+  bindRange(el.qmax, el.qmaxVal, (v) => String(v));
+
+  el.toggleRun.onclick = () => {
+    running = !running;
+    el.toggleRun.textContent = running ? 'Pause' : 'Play';
+  };
+
+  // ---------- Simulation model ----------
+  // We simulate "arrivals" into a queue from N senders.
+  // - sync mode: senders align their sends in tight windows (microbursts)
+  // - random mode: send events are Poisson-ish and spread out
+  //
+  // Queue drains at a fixed "capacity" each frame (scaled).
+  // We track queue occupancy and show a moving utilization estimate.
+
+  let t = 0;                // simulation time
+  let q = 0;                // queue occupancy (arbitrary units)
+  let avgUtil = 0;          // exponential moving average of utilization
+  let lastArr = 0;
+  let lastDrain = 0;
+
+  function reset() {
+    t = 0;
+    q = 0;
+    avgUtil = 0;
+    lastArr = 0;
+    lastDrain = 0;
+    particles.length = 0;
+  }
+  el.reset.onclick = reset;
+
+  // ---------- Visual layout ----------
+  // We'll draw:
+  //  - Senders (left column)
+  //  - Bottleneck + Queue (center)
+  //  - Receiver (right)
+  //  - Flow particles (moving dots along arrows)
+  //  - Queue gauge and a small utilization timeline
+
+  function getLayout() {
+    const w = canvas.getBoundingClientRect().width;
+    const h = canvas.getBoundingClientRect().height;
+
+    const margin = 28;
+    const leftX = margin;
+    const rightX = w - margin;
+
+    const centerX = w * 0.55;
+    const senderAreaTop = 70;
+    const senderAreaBottom = h * 0.65;
+    const senderAreaH = senderAreaBottom - senderAreaTop;
+
+    const queueX = centerX;
+    const queueY = h * 0.35;
+    const queueW = 150;
+    const queueH = 70;
+
+    const receiverX = rightX - 60;
+    const receiverY = queueY;
+
+    const timelineX = margin;
+    const timelineY = h * 0.74;
+    const timelineW = w - margin * 2;
+    const timelineH = h * 0.20;
+
+    return {
+      w, h, margin,
+      leftX,
+      queueX, queueY, queueW, queueH,
+      receiverX, receiverY,
+      senderAreaTop, senderAreaBottom, senderAreaH,
+      timelineX, timelineY, timelineW, timelineH
+    };
+  }
+
+  // ---------- Flow particles ----------
+  const particles = [];
+  function spawnParticle(x0, y0, x1, y1, speed, kind) {
+    particles.push({
+      x0, y0, x1, y1,
+      x: x0, y: y0,
+      p: 0,
+      speed,
+      kind
+    });
+  }
+
+  function lerp(a,b,p){ return a + (b-a)*p; }
+
+  // ---------- Random helpers ----------
+  function rand() { return Math.random(); }
+
+  // Create "sync windows" (periodic)
+  function syncEnvelope(time, tightness) {
+    // Periodic Gaussian-ish envelope based on distance to nearest beat.
+    // Smaller tightness -> narrower peak.
+    const period = 1.4; // seconds-ish (arbitrary)
+    const phase = (time % period) / period; // [0,1)
+    // distance to center
+    const d = Math.min(Math.abs(phase - 0.22), 1 - Math.abs(phase - 0.22));
+    // Gaussian-ish peak
+    const sigma = tightness; // 0.05..0.45
+    const g = Math.exp(-(d*d) / (2*sigma*sigma));
+    return g; // 0..1
+  }
+
+  // ---------- Timeline history ----------
+  const utilHist = [];
+  const arrHist = [];
+  const qHist = [];
+  const maxHist = 240; // frames
+
+  function pushHist(arr, v) {
+    arr.push(v);
+    if (arr.length > maxHist) arr.shift();
+  }
+
+  // ---------- Drawing primitives ----------
+  function clear(w,h) {
+    ctx.clearRect(0,0,w,h);
+  }
+
+  function roundedRect(x,y,w,h,r){
+    ctx.beginPath();
+    ctx.moveTo(x+r,y);
+    ctx.arcTo(x+w,y, x+w,y+h, r);
+    ctx.arcTo(x+w,y+h, x,y+h, r);
+    ctx.arcTo(x,y+h, x,y, r);
+    ctx.arcTo(x,y, x+w,y, r);
+    ctx.closePath();
+  }
+
+  function drawArrow(x0,y0,x1,y1, alpha=0.22) {
+    ctx.save();
+    ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(x0,y0);
+    ctx.lineTo(x1,y1);
+    ctx.stroke();
+
+    const ang = Math.atan2(y1-y0, x1-x0);
+    const head = 10;
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x1 - head*Math.cos(ang - Math.PI/7), y1 - head*Math.sin(ang - Math.PI/7));
+    ctx.lineTo(x1 - head*Math.cos(ang + Math.PI/7), y1 - head*Math.sin(ang + Math.PI/7));
+    ctx.closePath();
+    ctx.fillStyle = `rgba(255,255,255,${alpha})`;
+    ctx.fill();
+    ctx.restore();
+  }
+
+  function drawLabel(text, x, y, size=12, color='rgba(232,238,247,0.85)', align='left') {
+    ctx.save();
+    ctx.font = `${size}px system-ui, -apple-system, Segoe UI, Roboto, Arial`;
+    ctx.fillStyle = color;
+    ctx.textAlign = align;
+    ctx.fillText(text, x, y);
+    ctx.restore();
+  }
+
+  // ---------- Main loop ----------
+  let lastTs = performance.now();
+  function tick(ts) {
+    const dt = Math.min(0.05, (ts - lastTs) / 1000);
+    lastTs = ts;
+
+    const layout = getLayout();
+    if (running) {
+      stepSim(dt, layout);
+      stepParticles(dt);
+    }
+    render(layout);
+
+    requestAnimationFrame(tick);
+  }
+
+  function stepSim(dt, layout) {
+    t += dt;
+
+    const N = Number(el.senders.value);
+    const tightness = Number(el.tight.value);
+    const arrivalRate = Number(el.arrivalRate.value);
+    const drainRate = Number(el.drainRate.value);
+    const qmax = Number(el.qmax.value);
+
+    // Compute instantaneous arrival pressure.
+    // We'll model each sender generating "attempted units" this frame.
+    let attempted = 0;
+
+    if (mode === 'sync') {
+      const env = syncEnvelope(t, tightness); // 0..1
+      // Synchronized burst: env raises send probability simultaneously.
+      // Base low-level chatter + burst envelope.
+      const base = 0.08;
+      const burst = env; // 0..1
+      const intensity = base + burst;
+      for (let i=0; i<N; i++) {
+        // Each sender attempts some fraction each frame
+        // with small noise.
+        const noise = 0.75 + rand()*0.5; // 0.75..1.25
+        attempted += arrivalRate * intensity * noise;
+      }
+    } else {
+      // Random mode: spread out attempts per sender (Poisson-ish).
+      // Each sender has a chance to send this frame.
+      for (let i=0; i<N; i++) {
+        const p = Math.min(0.95, arrivalRate * 0.18); // per-frame event probability scaled
+        if (rand() < p) {
+          attempted += arrivalRate * (0.55 + rand()*0.8);
+        } else {
+          attempted += arrivalRate * 0.03; // background trickle
+        }
+      }
+    }
+
+    // Convert attempted into arrivals that actually enter queue.
+    // In this model, everything hits the same bottleneck/queue.
+    // Apply queue capacity (qmax). Anything beyond is "drop" (we don't explicitly show drops yet).
+    const arrivals = attempted * dt * 60; // scale to be visible
+    const before = q;
+    q = Math.min(qmax, q + arrivals);
+
+    // Drain each frame
+    const drain = drainRate * dt * 60 * 1.9; // scale
+    const drained = Math.min(q, drain);
+    q -= drained;
+
+    // Utilization estimate: drained relative to drain capacity
+    const util = Math.min(1, drained / Math.max(1e-6, drain));
+    avgUtil = 0.93*avgUtil + 0.07*util;
+
+    lastArr = arrivals;
+    lastDrain = drained;
+
+    // Emit particles to visualize traffic:
+    // We spawn particles proportional to arrivals, but cap for performance.
+    const spawnBudget = Math.min(18, Math.floor(arrivals / 10));
+    if (spawnBudget > 0) {
+      const senders = getSenderPositions(layout, N);
+      const qx = layout.queueX - layout.queueW/2;
+      const qy = layout.queueY;
+      const entryX = qx - 18;
+      const entryY = qy;
+
+      for (let k=0; k<spawnBudget; k++) {
+        const s = senders[Math.floor(rand()*senders.length)];
+        spawnParticle(s.x+44, s.y, entryX, entryY, 0.9 + rand()*0.6, 'in');
+      }
+    }
+
+    const outBudget = Math.min(12, Math.floor(drained / 9));
+    if (outBudget > 0) {
+      const qx = layout.queueX + layout.queueW/2;
+      const qy = layout.queueY;
+      const rx = layout.receiverX - 40;
+      const ry = layout.receiverY;
+      for (let k=0; k<outBudget; k++) {
+        spawnParticle(qx+18, qy, rx, ry, 0.9 + rand()*0.6, 'out');
+      }
+    }
+
+    // push history
+    pushHist(utilHist, avgUtil);
+    pushHist(arrHist, arrivals);
+    pushHist(qHist, q / qmax);
+
+    // update UI stats
+    el.qOcc.textContent = Math.round(q).toString();
+    el.qPct.textContent = `${Math.round((q / qmax) * 100)}%`;
+    el.arrNow.textContent = lastArr.toFixed(2);
+    el.drNow.textContent = lastDrain.toFixed(2);
+    el.utilNow.textContent = `${Math.round(avgUtil * 100)}%`;
+  }
+
+  function stepParticles(dt) {
+    for (let i = particles.length - 1; i >= 0; i--) {
+      const p = particles[i];
+      p.p += dt * p.speed;
+      if (p.p >= 1) {
+        particles.splice(i, 1);
+        continue;
+      }
+      p.x = lerp(p.x0, p.x1, p.p);
+      p.y = lerp(p.y0, p.y1, p.p);
+    }
+  }
+
+  function getSenderPositions(layout, N) {
+    const { senderAreaTop, senderAreaH, leftX } = layout;
+    const gap = senderAreaH / (N - 1);
+    const pos = [];
+    for (let i=0; i<N; i++) {
+      pos.push({
+        x: leftX + 30,
+        y: senderAreaTop + i * gap
+      });
+    }
+    return pos;
+  }
+
+  function render(layout) {
+    const { w, h } = layout;
+    clear(w, h);
+
+    // Background grid lines (subtle)
+    ctx.save();
+    ctx.strokeStyle = 'rgba(255,255,255,0.04)';
+    ctx.lineWidth = 1;
+    for (let y=40; y<h; y+=40) {
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+    }
+    ctx.restore();
+
+    // Title labels
+    drawLabel('Senders', 34, 34, 12, 'rgba(167,179,197,0.9)');
+    drawLabel('Bottleneck / Queue', layout.queueX - 70, 34, 12, 'rgba(167,179,197,0.9)');
+    drawLabel('Receiver', layout.receiverX - 30, 34, 12, 'rgba(167,179,197,0.9)');
+
+    // Nodes
+    drawSenders(layout);
+    drawQueue(layout);
+    drawReceiver(layout);
+
+    // Arrows (static)
+    drawStaticFlows(layout);
+
+    // Particles
+    drawParticles();
+
+    // Timeline
+    drawTimeline(layout);
+  }
+
+  function drawSenders(layout) {
+    const N = Number(el.senders.value);
+    const senders = getSenderPositions(layout, N);
+
+    for (let i=0; i<senders.length; i++) {
+      const s = senders[i];
+      // sender box
+      ctx.save();
+      roundedRect(s.x - 28, s.y - 16, 56, 32, 10);
+      ctx.fillStyle = 'rgba(255,255,255,0.04)';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.10)';
+      ctx.stroke();
+      ctx.restore();
+
+      // label (small)
+      drawLabel(`S${i+1}`, s.x, s.y + 4, 11, 'rgba(232,238,247,0.75)', 'center');
+    }
+  }
+
+  function drawQueue(layout) {
+    const qmax = Number(el.qmax.value);
+    const qPct = qmax > 0 ? (q / qmax) : 0;
+
+    const x = layout.queueX - layout.queueW/2;
+    const y = layout.queueY - layout.queueH/2;
+
+    // queue outline
+    ctx.save();
+    roundedRect(x, y, layout.queueW, layout.queueH, 14);
+    ctx.fillStyle = 'rgba(255,255,255,0.03)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // queue fill bar
+    const pad = 10;
+    const innerW = layout.queueW - pad*2;
+    const innerH = layout.queueH - pad*2;
+    const fillW = innerW * Math.max(0, Math.min(1, qPct));
+
+    // choose fill color based on occupancy
+    let fill = 'rgba(77,163,255,0.60)';
+    if (qPct > 0.75) fill = 'rgba(255,92,92,0.60)';
+    else if (qPct > 0.45) fill = 'rgba(255,176,32,0.60)';
+
+    roundedRect(x+pad, y+pad, fillW, innerH, 10);
+    ctx.fillStyle = fill;
+    ctx.fill();
+
+    // label
+    drawLabel('QUEUE', layout.queueX, layout.queueY - 2, 12, 'rgba(232,238,247,0.82)', 'center');
+    drawLabel(`${Math.round(qPct*100)}%`, layout.queueX, layout.queueY + 16, 11, 'rgba(232,238,247,0.70)', 'center');
+
+    ctx.restore();
+  }
+
+  function drawReceiver(layout) {
+    const x = layout.receiverX - 42;
+    const y = layout.receiverY - 22;
+
+    ctx.save();
+    roundedRect(x, y, 84, 44, 14);
+    ctx.fillStyle = 'rgba(255,255,255,0.04)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.10)';
+    ctx.stroke();
+    ctx.restore();
+
+    drawLabel('R', layout.receiverX, layout.receiverY + 5, 13, 'rgba(232,238,247,0.75)', 'center');
+  }
+
+  function drawStaticFlows(layout) {
+    const N = Number(el.senders.value);
+    const senders = getSenderPositions(layout, N);
+    const qx = layout.queueX - layout.queueW/2 - 18;
+    const qy = layout.queueY;
+
+    // Arrows from each sender to queue entry point
+    for (const s of senders) {
+      drawArrow(s.x + 28, s.y, qx, qy, 0.14);
+    }
+
+    // Arrow from queue to receiver
+    const outX = layout.queueX + layout.queueW/2 + 18;
+    const rx = layout.receiverX - 42;
+    const ry = layout.receiverY;
+    drawArrow(outX, layout.queueY, rx, ry, 0.18);
+
+    // emphasize bottleneck (narrow doorway)
+    ctx.save();
+    ctx.strokeStyle = 'rgba(255,255,255,0.16)';
+    ctx.lineWidth = 6;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(qx, qy - 18);
+    ctx.lineTo(qx, qy + 18);
+    ctx.stroke();
+    ctx.restore();
+
+    drawLabel('bottleneck', qx, qy - 26, 11, 'rgba(167,179,197,0.75)', 'center');
+  }
+
+  function drawParticles() {
+    ctx.save();
+    for (const p of particles) {
+      const r = 3.2;
+      let col = 'rgba(77,163,255,0.85)';
+      if (p.kind === 'out') col = 'rgba(110,231,183,0.75)';
+      ctx.fillStyle = col;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, r, 0, Math.PI*2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  function drawTimeline(layout) {
+    const { timelineX:x, timelineY:y, timelineW:w, timelineH:h } = layout;
+
+    // panel
+    ctx.save();
+    roundedRect(x, y, w, h, 14);
+    ctx.fillStyle = 'rgba(255,255,255,0.02)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+    ctx.stroke();
+
+    drawLabel('Approx utilization (smoothed) — averages can hide microbursts', x+14, y+22, 12, 'rgba(167,179,197,0.9)', 'left');
+
+    // graph area
+    const gx = x + 14;
+    const gy = y + 34;
+    const gw = w - 28;
+    const gh = h - 46;
+
+    // baseline grid
+    ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+    ctx.lineWidth = 1;
+    for (let i=0; i<=4; i++){
+      const yy = gy + (gh*i/4);
+      ctx.beginPath(); ctx.moveTo(gx, yy); ctx.lineTo(gx+gw, yy); ctx.stroke();
+    }
+
+    // util line
+    if (utilHist.length > 2) {
+      ctx.beginPath();
+      for (let i=0; i<utilHist.length; i++){
+        const p = utilHist[i];
+        const xx = gx + (i/(maxHist-1))*gw;
+        const yy = gy + (1 - p)*gh;
+        if (i===0) ctx.moveTo(xx, yy);
+        else ctx.lineTo(xx, yy);
+      }
+      ctx.strokeStyle = 'rgba(77,163,255,0.85)';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+
+    // queue occupancy band (as faint fill)
+    if (qHist.length > 2) {
+      ctx.beginPath();
+      for (let i=0; i<qHist.length; i++){
+        const p = qHist[i];
+        const xx = gx + (i/(maxHist-1))*gw;
+        const yy = gy + (1 - p)*gh;
+        if (i===0) ctx.moveTo(xx, gy+gh);
+        ctx.lineTo(xx, yy);
+      }
+      ctx.lineTo(gx+gw, gy+gh);
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(255,176,32,0.10)';
+      ctx.fill();
+    }
+
+    // labels
+    drawLabel('0%', gx, gy+gh+16, 11, 'rgba(167,179,197,0.75)', 'left');
+    drawLabel('100%', gx, gy+10, 11, 'rgba(167,179,197,0.75)', 'left');
+
+    ctx.restore();
+  }
+
+  // start
+  setMode('sync');
+  reset();
+  requestAnimationFrame(tick);
+})();
+</script>
+</body>
+</html>

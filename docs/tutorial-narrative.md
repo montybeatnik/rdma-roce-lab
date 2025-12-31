@@ -24,10 +24,10 @@ The lab uses two VMs and SoftRoCE so the RDMA protocol can run on a normal NIC:
 - **`librdmacm`**: handles the control plane (address resolution, connect).
 - **`libibverbs`**: handles the data plane (WRITE/READ work requests).
 
-You can see this setup in `setup_rdma_lab.sh`.
+You can see this setup in `scripts/guide/01_multipass_setup.sh`.
 
 ## 3) The minimal flow (for blog snippets)
-The minimal example lives in `examples/minimal/` and focuses on the essential
+The minimal example lives in `examples/c/minimal/` and focuses on the essential
 control and data plane steps.
 
 ### Server: register a buffer and share its capability
@@ -98,7 +98,7 @@ Full context: `src/client_imm.c`
 
 ## 5) Suggested narrative order for the blog
 1) Explain the "capability blob" (`addr` + `rkey`) and why it exists.
-2) Walk through `examples/minimal` in 15–20 lines of code.
+2) Walk through `examples/c/minimal` in 15–20 lines of code.
 3) Show how the same flow maps to parameter servers and inference pipelines.
 4) Link to the fuller examples in `src/` for readers who want depth.
 

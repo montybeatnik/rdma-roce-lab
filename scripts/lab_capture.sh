@@ -199,8 +199,8 @@ if [ "$CAPTURE_RUN_APPS" = "1" ]; then
   SERVER_CMD="./rdma_server"
   CLIENT_CMD="./rdma_client"
   if [ "$CAPTURE_USE_SCRIPTS" = "1" ]; then
-    SERVER_CMD="./scripts/run_server.sh"
-    CLIENT_CMD="./scripts/run_client.sh"
+    SERVER_CMD="./scripts/guide/03_run_server_write_read.sh"
+    CLIENT_CMD="./scripts/guide/04_run_client_write_read.sh"
   fi
   if ! ssh "${CAPTURE_USER}@${SERVER_SSH_HOST}" \
     "bash -lc 'cd ${CAPTURE_REPO} && ${SERVER_ENV}nohup timeout ${SERVER_RUN_SECONDS} ${SERVER_CMD} ${CAPTURE_PORT} >/tmp/rdma_server.log 2>&1 &'"; then

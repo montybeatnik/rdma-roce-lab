@@ -27,10 +27,10 @@ We use two VMs with SoftRoCE so RDMA can run on a normal Ethernet NIC.
 - **`librdmacm`**: control plane (resolve, connect, exchange metadata).
 - **`libibverbs`**: data plane (WRITE/READ work requests, CQ completions).
 
-Setup script: `setup_rdma_lab.sh`
+Setup script: `scripts/guide/01_multipass_setup.sh`
 
 ## 3) The minimal flow (15 lines that explain the whole protocol)
-Use the minimal example in `examples/minimal/` to keep the narrative tight.
+Use the minimal example in `examples/c/minimal/` to keep the narrative tight.
 
 ### Server: register memory and share the capability
 ```c
@@ -45,7 +45,7 @@ cm_server_accept_with_priv(&c, &info, sizeof(info));
 Why this exists: RDMA requires explicit memory registration and a capability
 token (rkey) so the NIC can enforce access.
 
-Full context: `examples/minimal/server_min.c`
+Full context: `examples/c/minimal/server_min.c`
 
 ### Client: use the capability to WRITE and READ
 ```c
@@ -58,7 +58,7 @@ post_read(c.qp, c.mr_rx, c.buf_rx, c.remote_addr, c.remote_rkey, BUF_SZ, 2, 1);
 Why this exists: the remote CPU is not on the data path; the capability grants
 the NIC permission to perform the transfer.
 
-Full context: `examples/minimal/client_min.c`
+Full context: `examples/c/minimal/client_min.c`
 
 ## 4) Packet-level view (what’s on the wire)
 We can capture both the control plane and the data plane.
@@ -70,7 +70,7 @@ We can capture both the control plane and the data plane.
 
 ### Seen in the logs:
 ```bash
-ubuntu@rdma-client:~/rdma-roce-lab$ ./scripts/run_client.sh 192.168.2.24 7471 
+ubuntu@rdma-client:~/rdma-roce-lab$ ./scripts/guide/04_run_client_write_read.sh 192.168.2.24 7471 
 [main] Create CM channel + ID + connect
 [cm_client_resolve] cm: getaddrinfo(192.168.2.24:7471)
 [cm_client_resolve] cm: rdma_resolve_addr(timeout=5000ms)
@@ -273,5 +273,5 @@ Figure placeholder: Conversations throughput table
 
 ## 8) Where to go next
 - Deep dive into `src/` for the full modular flow.
-- Use `examples/ai-ml/README.md` to evolve the protocol into richer workloads.
+- Use `examples/c/ai-ml/README.md` to evolve the protocol into richer workloads.
 - Keep the Wireshark captures in the post; they make the protocol tangible.

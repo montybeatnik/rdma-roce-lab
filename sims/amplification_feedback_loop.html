@@ -1,0 +1,571 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Amplification Feedback Loop Simulation</title>
+  <link rel="stylesheet" href="shared.css"/>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Amplification Feedback Loop</h1>
+    <p class="sub">
+      A visual simulation of how small delays can amplify: delay → queue buildup → sync waits → retries/backoff → more delay.
+      Use this to generate short, consistent clips for slides.
+    </p>
+
+    <div class="grid">
+      <div class="card">
+        <div class="canvasWrap">
+          <canvas id="c"></canvas>
+        </div>
+      </div>
+
+      <div class="card controls">
+        <div class="ctl">
+          <label><span>Mode</span><span class="pill" id="modeLabel">Amplifying</span></label>
+          <div class="tog">
+            <div class="btn primary" id="modeAmp">Amplifying</div>
+            <div class="btn" id="modeDamp">Damping</div>
+          </div>
+          <div class="note">
+            <strong>Amplifying</strong> makes the loop “run away.” <br/>
+            <strong>Damping</strong> shows what it looks like when the system can recover.
+          </div>
+        </div>
+
+        <div class="ctl">
+          <label><span>Loop Speed</span><strong><span id="speedVal">1.00</span></strong></label>
+          <input id="speed" type="range" min="0.60" max="1.80" step="0.05" value="1.00" />
+          <div class="note">Controls how fast the token travels around the loop.</div>
+        </div>
+
+        <div class="ctl">
+          <label><span>Gain (Amplification)</span><strong><span id="gainVal">1.20</span></strong></label>
+          <input id="gain" type="range" min="0.80" max="1.60" step="0.05" value="1.20" />
+          <div class="note">Higher gain = faster runaway in Amplifying mode.</div>
+        </div>
+
+        <div class="ctl">
+          <label><span>Recovery (Damping)</span><strong><span id="recVal">0.18</span></strong></label>
+          <input id="recovery" type="range" min="0.05" max="0.40" step="0.01" value="0.18" />
+          <div class="note">How strongly the system pulls severity back down in Damping mode.</div>
+        </div>
+
+        <div class="ctl">
+          <label><span>Noise</span><strong><span id="noiseVal">0.10</span></strong></label>
+          <input id="noise" type="range" min="0.00" max="0.35" step="0.01" value="0.10" />
+          <div class="note">Adds variability to show “it starts small and feels random.”</div>
+        </div>
+
+        <div class="ctl">
+          <div class="tog">
+            <div class="btn primary" id="toggleRun">Pause</div>
+             <div class="btn" id="demo">Demo Mode</div>
+            <div class="btn danger" id="reset">Reset</div>
+          </div>
+
+          <div class="kv">
+            <span>Severity</span><strong><span id="sev">0%</span></strong>
+            <span>Stage</span><strong><span id="stage">Delay</span></strong>
+            <span>Loop count</span><strong><span id="loops">0</span></strong>
+          </div>
+
+          <div class="note">
+            Tip for recording: set <strong>Amplifying</strong>, speed ~1.1, gain ~1.25, noise ~0.08, record 12–18 seconds.
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script src="shared.js"></script>
+<script>
+(() => {
+  const { canvas, ctx } = SimUI.setupCanvas('c');
+
+  // Controls
+  const el = {
+    modeLabel: document.getElementById('modeLabel'),
+    modeAmp: document.getElementById('modeAmp'),
+    modeDamp: document.getElementById('modeDamp'),
+    speed: document.getElementById('speed'),
+    gain: document.getElementById('gain'),
+    recovery: document.getElementById('recovery'),
+    noise: document.getElementById('noise'),
+    speedVal: document.getElementById('speedVal'),
+    gainVal: document.getElementById('gainVal'),
+    recVal: document.getElementById('recVal'),
+    noiseVal: document.getElementById('noiseVal'),
+    toggleRun: document.getElementById('toggleRun'),
+    reset: document.getElementById('reset'),
+    sev: document.getElementById('sev'),
+    stage: document.getElementById('stage'),
+    loops: document.getElementById('loops'),
+    demo: document.getElementById('demo'),
+  };
+
+  const bindRange = SimUI.bindRange;
+  bindRange(el.speed, el.speedVal, v=>Number(v).toFixed(2));
+  bindRange(el.gain, el.gainVal, v=>Number(v).toFixed(2));
+  bindRange(el.recovery, el.recVal, v=>Number(v).toFixed(2));
+  bindRange(el.noise, el.noiseVal, v=>Number(v).toFixed(2));
+
+  let mode = 'amp'; // amp | damp
+  let running = true;
+
+  function setMode(m){
+    mode = m;
+    el.modeLabel.textContent = (m === 'amp') ? 'Amplifying' : 'Damping';
+    el.modeAmp.classList.toggle('primary', m === 'amp');
+    el.modeDamp.classList.toggle('primary', m === 'damp');
+    reset();
+  }
+
+    let demoTimerIds = [];
+    let demoRunning = false;
+
+    function clearDemoTimers() {
+    for (const id of demoTimerIds) clearTimeout(id);
+    demoTimerIds = [];
+    demoRunning = false;
+    if (el.demo) el.demo.textContent = 'Demo Mode';
+    }
+
+    function applyPreset(p) {
+    // Stop any running demo
+    clearDemoTimers();
+
+    // Set sliders
+    el.speed.value = p.speed;
+    el.gain.value = p.gain;
+    el.recovery.value = p.recovery;
+    el.noise.value = p.noise;
+
+    // Update labels (your bindRange outputs)
+    el.speed.dispatchEvent(new Event('input'));
+    el.gain.dispatchEvent(new Event('input'));
+    el.recovery.dispatchEvent(new Event('input'));
+    el.noise.dispatchEvent(new Event('input'));
+
+    // Set mode + reset so the change is obvious
+    setMode(p.mode);
+    reset();
+
+    // Ensure it plays
+    running = true;
+    el.toggleRun.textContent = 'Pause';
+    }
+
+    function runDemo() {
+    // Toggle behavior: clicking again stops demo
+    if (demoRunning) {
+        clearDemoTimers();
+        return;
+    }
+
+    demoRunning = true;
+    el.demo.textContent = 'Stop Demo';
+
+    // Scene 1: Runaway (Amplifying)
+    applyPreset({
+        mode: 'amp',
+        speed: 1.15,
+        gain: 1.30,
+        recovery: 0.18,
+        noise: 0.10
+    });
+
+    // After 9s → Scene 2: Recovery (Damping)
+    demoTimerIds.push(setTimeout(() => {
+        // IMPORTANT: This scene is only visually obvious if damping is strong.
+        applyPreset({
+        mode: 'damp',
+        speed: 1.10,
+        gain: 1.10,
+        recovery: 0.32,
+        noise: 0.06
+        });
+    }, 9000));
+
+    // After 18s → Scene 3: Balanced (gentle oscillation)
+    demoTimerIds.push(setTimeout(() => {
+        applyPreset({
+        mode: 'damp',
+        speed: 1.00,
+        gain: 1.10,
+        recovery: 0.22,
+        noise: 0.08
+        });
+    }, 18000));
+
+    // After 26s → Stop demo (leave it running in Balanced)
+    demoTimerIds.push(setTimeout(() => {
+        demoRunning = false;
+        el.demo.textContent = 'Demo Mode';
+    }, 26000));
+    }
+
+  el.modeAmp.onclick = ()=>setMode('amp');
+  el.modeDamp.onclick = ()=>setMode('damp');
+
+  el.toggleRun.onclick = ()=>{
+    running = !running;
+    el.toggleRun.textContent = running ? 'Pause' : 'Play';
+  };
+
+  // Simulation state
+  let t = 0;
+  let phase = 0;          // 0..1 around loop
+  let severity = 0.08;    // 0..1
+  let loopCount = 0;
+  let lastPhaseBucket = -1;
+
+  function reset(){
+    t = 0;
+    phase = 0;
+    severity = 0.08;
+    loopCount = 0;
+    lastPhaseBucket = -1;
+    sevHist.length = 0;
+  }
+  el.reset.onclick = reset;
+  el.demo.onclick = runDemo;
+
+  // Loop stages
+  const stages = [
+    { name: 'Delay',               desc: 'Small delay appears' },
+    { name: 'Queue Buildup',       desc: 'Buffers fill' },
+    { name: 'Sync Wait',           desc: 'Everyone waits' },
+    { name: 'Retries / Backoff',   desc: 'Recovery adds load' },
+  ];
+
+  // History (for a little severity chart)
+  const sevHist = [];
+  const maxHist = 220;
+  const pushHist = (v)=>{ sevHist.push(v); if(sevHist.length>maxHist) sevHist.shift(); };
+
+  // Layout helpers
+  function layout(){
+    const w = canvas.getBoundingClientRect().width;
+    const h = canvas.getBoundingClientRect().height;
+    const cx = w * 0.52;
+    const cy = h * 0.40;
+    const R = Math.min(w,h) * 0.23;
+
+    const chartX = 28;
+    const chartY = h * 0.72;
+    const chartW = w - 56;
+    const chartH = h * 0.22;
+
+    return { w,h,cx,cy,R, chartX,chartY,chartW,chartH };
+  }
+
+  function rnd(){ return Math.random(); }
+  function clamp(x,a,b){ return Math.max(a, Math.min(b, x)); }
+
+  function roundedRect(x,y,w,h,r){
+    ctx.beginPath();
+    ctx.moveTo(x+r,y);
+    ctx.arcTo(x+w,y, x+w,y+h, r);
+    ctx.arcTo(x+w,y+h, x,y+h, r);
+    ctx.arcTo(x,y+h, x,y, r);
+    ctx.arcTo(x,y, x+w,y, r);
+    ctx.closePath();
+  }
+
+  function drawText(text,x,y,size=12,color='rgba(232,238,247,0.85)',align='left'){
+    ctx.save();
+    ctx.font = `${size}px system-ui,-apple-system,Segoe UI,Roboto,Arial`;
+    ctx.fillStyle = color;
+    ctx.textAlign = align;
+    ctx.fillText(text,x,y);
+    ctx.restore();
+  }
+
+  // Map stage boxes around a loop (like a rounded square ring)
+  function stagePositions(L){
+    const {cx,cy,R} = L;
+    // diamond-ish positions
+    return [
+      { x: cx,     y: cy - R, }, // Delay
+      { x: cx + R, y: cy,     }, // Queue
+      { x: cx,     y: cy + R, }, // Sync
+      { x: cx - R, y: cy,     }, // Retries
+    ];
+  }
+
+  // Drawing of loop arrows
+  function drawArrow(x0,y0,x1,y1,alpha=0.18){
+    ctx.save();
+    ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(x0,y0);
+    ctx.lineTo(x1,y1);
+    ctx.stroke();
+
+    const ang = Math.atan2(y1-y0, x1-x0);
+    const head = 10;
+    ctx.beginPath();
+    ctx.moveTo(x1,y1);
+    ctx.lineTo(x1 - head*Math.cos(ang - Math.PI/7), y1 - head*Math.sin(ang - Math.PI/7));
+    ctx.lineTo(x1 - head*Math.cos(ang + Math.PI/7), y1 - head*Math.sin(ang + Math.PI/7));
+    ctx.closePath();
+    ctx.fillStyle = `rgba(255,255,255,${alpha})`;
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // Animation loop
+  let lastTs = performance.now();
+  function tick(ts){
+    const dt = Math.min(0.05, (ts-lastTs)/1000);
+    lastTs = ts;
+
+    const L = layout();
+    if (running) step(dt);
+    render(L);
+
+    requestAnimationFrame(tick);
+  }
+
+  function step(dt){
+    t += dt;
+
+    const speed = Number(el.speed.value);
+    const gain = Number(el.gain.value);
+    const recovery = Number(el.recovery.value);
+    const noise = Number(el.noise.value);
+
+    // Move token around loop
+    const dPhase = dt * 0.18 * speed * (1 + severity*0.9); // speeds up as things get worse
+    phase += dPhase;
+    if (phase >= 1){
+      phase -= 1;
+      loopCount += 1;
+    }
+
+    // Determine stage bucket (0..3)
+    const bucket = Math.floor(phase * stages.length); // 0..3
+    if (bucket !== lastPhaseBucket){
+      lastPhaseBucket = bucket;
+      el.stage.textContent = stages[bucket].name;
+    }
+
+    // Update severity based on mode and stage effects
+    // We model a small injection at "Delay", then compounding effects downstream.
+    // Severity is bounded [0,1].
+    const stageFactor = [1.00, 1.10, 1.18, 1.28][bucket];
+
+    // base disturbance + small noise
+    const disturbance = 0.0025 * stageFactor + (rnd()-0.5) * noise * 0.004;
+
+    if (mode === 'amp') {
+    severity += disturbance + (severity * 0.010 * gain * stageFactor);
+    } else {
+    // Strong, severity-proportional stabilization
+    const pullDown = recovery * (0.020 + 0.050 * severity);
+    severity += disturbance + (severity * 0.003 * stageFactor);
+    severity -= pullDown;
+    }
+
+    severity = clamp(severity, 0, 1);
+
+    // record history
+    pushHist(severity);
+
+    // UI
+    el.sev.textContent = `${Math.round(severity*100)}%`;
+    el.loops.textContent = String(loopCount);
+  }
+
+  function render(L){
+    const { w,h } = L;
+    ctx.clearRect(0,0,w,h);
+
+    // subtle horizontal grid
+    ctx.save();
+    ctx.strokeStyle='rgba(255,255,255,0.04)';
+    ctx.lineWidth=1;
+    for(let y=40;y<h;y+=40){
+      ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(w,y); ctx.stroke();
+    }
+    ctx.restore();
+
+    drawHeader(L);
+    drawLoop(L);
+    drawSeverityGauge(L);
+    drawSeverityChart(L);
+  }
+
+  function drawHeader(L){
+    drawText('Feedback loop: delay → queue → sync wait → retries/backoff → more delay', 28, 34, 12, 'rgba(167,179,197,0.92)');
+    drawText(mode === 'amp' ? 'Amplifying (runaway)' : 'Damping (recovery)', L.w-28, 34, 12,
+      mode === 'amp' ? 'rgba(255,176,32,0.88)' : 'rgba(110,231,183,0.80)', 'right');
+  }
+
+  function drawLoop(L){
+    const pos = stagePositions(L);
+
+    // Loop ring (subtle)
+    ctx.save();
+    ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+    ctx.lineWidth = 18;
+    ctx.beginPath();
+    ctx.arc(L.cx, L.cy, L.R*0.92, 0, Math.PI*2);
+    ctx.stroke();
+    ctx.restore();
+
+    // Arrows between stages
+    const pad = 44;
+    for (let i=0;i<pos.length;i++){
+      const a = pos[i];
+      const b = pos[(i+1)%pos.length];
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const len = Math.hypot(dx,dy) || 1;
+      const x0 = a.x + (dx/len)*pad;
+      const y0 = a.y + (dy/len)*pad;
+      const x1 = b.x - (dx/len)*pad;
+      const y1 = b.y - (dy/len)*pad;
+      drawArrow(x0,y0,x1,y1,0.18);
+    }
+
+    // Stage boxes
+    const active = Math.floor(phase * stages.length);
+    for (let i=0;i<pos.length;i++){
+      const p = pos[i];
+      const isActive = (i === active);
+
+      const bw = 170, bh = 56;
+      const x = p.x - bw/2;
+      const y = p.y - bh/2;
+
+      // fill color based on severity and active stage
+      let fill = 'rgba(255,255,255,0.03)';
+      let stroke = 'rgba(255,255,255,0.12)';
+
+      if (isActive) {
+        // highlight active stage: severity colors
+        if (severity > 0.75) fill = 'rgba(255,92,92,0.18)', stroke='rgba(255,92,92,0.45)';
+        else if (severity > 0.45) fill = 'rgba(255,176,32,0.16)', stroke='rgba(255,176,32,0.45)';
+        else fill = 'rgba(77,163,255,0.16)', stroke='rgba(77,163,255,0.45)';
+      }
+
+      ctx.save();
+      roundedRect(x,y,bw,bh,14);
+      ctx.fillStyle = fill;
+      ctx.fill();
+      ctx.strokeStyle = stroke;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.restore();
+
+      drawText(stages[i].name, p.x, p.y+5, 13, 'rgba(232,238,247,0.86)', 'center');
+      drawText(stages[i].desc, p.x, p.y+24, 11, 'rgba(167,179,197,0.82)', 'center');
+    }
+
+    // Moving token on circle (represents “pressure” traveling through stages)
+    const ang = (phase * Math.PI*2) - Math.PI/2;
+    const tx = L.cx + Math.cos(ang) * (L.R*0.92);
+    const ty = L.cy + Math.sin(ang) * (L.R*0.92);
+
+    ctx.save();
+    const r = 7 + severity*5;
+    const col = severity > 0.75 ? 'rgba(255,92,92,0.95)' : (severity > 0.45 ? 'rgba(255,176,32,0.92)' : 'rgba(77,163,255,0.90)');
+    ctx.fillStyle = col;
+    ctx.beginPath();
+    ctx.arc(tx, ty, r, 0, Math.PI*2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  function drawSeverityGauge(L){
+    // Right-side gauge inside main canvas (top-right region)
+    const gx = L.w - 250;
+    const gy = 78;
+    const gw = 200;
+    const gh = 18;
+
+    drawText('Severity', gx, gy-12, 12, 'rgba(167,179,197,0.90)');
+
+    ctx.save();
+    roundedRect(gx, gy, gw, gh, 10);
+    ctx.fillStyle = 'rgba(255,255,255,0.03)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.10)';
+    ctx.stroke();
+
+    const fillW = gw * severity;
+    let fill = 'rgba(77,163,255,0.70)';
+    if (severity > 0.75) fill = 'rgba(255,92,92,0.70)';
+    else if (severity > 0.45) fill = 'rgba(255,176,32,0.70)';
+
+    roundedRect(gx, gy, Math.max(2, fillW), gh, 10);
+    ctx.fillStyle = fill;
+    ctx.fill();
+
+    drawText(`${Math.round(severity*100)}%`, gx+gw+12, gy+14, 12, 'rgba(232,238,247,0.80)');
+    ctx.restore();
+  }
+
+  function drawSeverityChart(L){
+    const x = L.chartX, y = L.chartY, w = L.chartW, h = L.chartH;
+
+    ctx.save();
+    roundedRect(x,y,w,h,14);
+    ctx.fillStyle='rgba(255,255,255,0.02)';
+    ctx.fill();
+    ctx.strokeStyle='rgba(255,255,255,0.08)';
+    ctx.stroke();
+
+    drawText('Severity over time (feedback loops are nonlinear)', x+14, y+22, 12, 'rgba(167,179,197,0.90)');
+
+    const gx = x+14, gy = y+34, gw = w-28, gh = h-46;
+
+    // grid
+    ctx.strokeStyle='rgba(255,255,255,0.05)';
+    ctx.lineWidth=1;
+    for(let i=0;i<=4;i++){
+      const yy = gy + (gh*i/4);
+      ctx.beginPath(); ctx.moveTo(gx,yy); ctx.lineTo(gx+gw,yy); ctx.stroke();
+    }
+
+    // line
+    if (sevHist.length > 2){
+      ctx.beginPath();
+      for(let i=0;i<sevHist.length;i++){
+        const p = sevHist[i];
+        const xx = gx + (i/(maxHist-1))*gw;
+        const yy = gy + (1-p)*gh;
+        if (i===0) ctx.moveTo(xx,yy);
+        else ctx.lineTo(xx,yy);
+      }
+      const col = (mode === 'amp') ? 'rgba(255,176,32,0.85)' : 'rgba(110,231,183,0.80)';
+      ctx.strokeStyle = col;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      // faint fill under curve
+      ctx.lineTo(gx+gw, gy+gh);
+      ctx.lineTo(gx, gy+gh);
+      ctx.closePath();
+      ctx.fillStyle = (mode === 'amp') ? 'rgba(255,176,32,0.08)' : 'rgba(110,231,183,0.07)';
+      ctx.fill();
+    }
+
+    drawText('0%', gx, gy+gh+16, 11, 'rgba(167,179,197,0.75)', 'left');
+    drawText('100%', gx, gy+10, 11, 'rgba(167,179,197,0.75)', 'left');
+
+    ctx.restore();
+  }
+
+  // Initialize
+  setMode('amp');
+  reset();
+  requestAnimationFrame(tick);
+})();
+</script>
+</body>
+</html>

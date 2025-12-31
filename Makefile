@@ -1,12 +1,18 @@
 
 CC=gcc
-CFLAGS=-O2 -std=c11 -Wall -D_GNU_SOURCE
+CFLAGS=-O2 -std=c11 -Wall -D_GNU_SOURCE -DRDMA_VERBOSE
 LDFLAGS=-lrdmacm -libverbs
+PYTHON?=python3
+PYTEST?=$(PYTHON) -m pytest
+PY_DEV?=rxe0
+PY_PORT?=1
+PY_CM_PORT?=7471
+PY_SERVER_IP?=
 
 SRC_DIR=src
 BIN_DIR=.
 
-SRCS=$(SRC_DIR)/rdma_cm_helpers.c $(SRC_DIR)/rdma_builders.c $(SRC_DIR)/rdma_mem.c $(SRC_DIR)/rdma_ops.c
+SRCS=$(SRC_DIR)/common.c $(SRC_DIR)/rdma_cm_helpers.c $(SRC_DIR)/rdma_builders.c $(SRC_DIR)/rdma_mem.c $(SRC_DIR)/rdma_ops.c
 HDRS=$(SRC_DIR)/common.h $(SRC_DIR)/rdma_ctx.h $(SRC_DIR)/rdma_cm_helpers.h $(SRC_DIR)/rdma_builders.h $(SRC_DIR)/rdma_mem.h $(SRC_DIR)/rdma_ops.h
 
 all: rdma_server rdma_client rdma_server_imm rdma_client_imm
@@ -23,17 +29,17 @@ rdma_server_imm: $(SRCS) $(SRC_DIR)/server_imm.c $(HDRS)
 rdma_client_imm: $(SRCS) $(SRC_DIR)/client_imm.c $(HDRS)
 	$(CC) $(CFLAGS) -I$(SRC_DIR) $(SRCS) $(SRC_DIR)/client_imm.c -o $@ $(LDFLAGS)
 
-rdma_bulk_server: $(SRCS) examples/rdma-bulk/rdma_bulk_server.c $(HDRS)
-	$(CC) $(CFLAGS) -I$(SRC_DIR) $(SRCS) examples/rdma-bulk/rdma_bulk_server.c -o $@ $(LDFLAGS)
+rdma_bulk_server: $(SRCS) examples/c/rdma-bulk/rdma_bulk_server.c $(HDRS)
+	$(CC) $(CFLAGS) -I$(SRC_DIR) $(SRCS) examples/c/rdma-bulk/rdma_bulk_server.c -o $@ $(LDFLAGS)
 
-rdma_bulk_client: $(SRCS) examples/rdma-bulk/rdma_bulk_client.c $(HDRS)
-	$(CC) $(CFLAGS) -I$(SRC_DIR) $(SRCS) examples/rdma-bulk/rdma_bulk_client.c -o $@ $(LDFLAGS)
+rdma_bulk_client: $(SRCS) examples/c/rdma-bulk/rdma_bulk_client.c $(HDRS)
+	$(CC) $(CFLAGS) -I$(SRC_DIR) $(SRCS) examples/c/rdma-bulk/rdma_bulk_client.c -o $@ $(LDFLAGS)
 
-tcp_server: examples/tcp/tcp_server.c examples/tcp/tcp_common.h
-	$(CC) $(CFLAGS) examples/tcp/tcp_server.c -o $@
+tcp_server: examples/c/tcp/tcp_server.c examples/c/tcp/tcp_common.h
+	$(CC) $(CFLAGS) examples/c/tcp/tcp_server.c -o $@
 
-tcp_client: examples/tcp/tcp_client.c examples/tcp/tcp_common.h
-	$(CC) $(CFLAGS) examples/tcp/tcp_client.c -o $@
+tcp_client: examples/c/tcp/tcp_client.c examples/c/tcp/tcp_common.h
+	$(CC) $(CFLAGS) examples/c/tcp/tcp_client.c -o $@
 
 perf-compare:
 	@echo "[INFO] RDMA bulk (1G) and TCP (1G) comparison"
@@ -43,11 +49,11 @@ perf-compare:
 	@echo "Client VM (rdma-client):"
 	@echo "  ./rdma_bulk_client <SERVER_IP> 7471 1G 4M | tee /tmp/rdma_1g_client.log"
 	@echo "  ./tcp_client <SERVER_IP> 9000 1G          | tee /tmp/tcp_1g_client.log"
-minimal_server: $(SRCS) examples/minimal/server_min.c $(HDRS)
-	$(CC) $(CFLAGS) -I$(SRC_DIR) $(SRCS) examples/minimal/server_min.c -o rdma_min_server $(LDFLAGS)
+minimal_server: $(SRCS) examples/c/minimal/server_min.c $(HDRS)
+	$(CC) $(CFLAGS) -I$(SRC_DIR) $(SRCS) examples/c/minimal/server_min.c -o rdma_min_server $(LDFLAGS)
 
-minimal_client: $(SRCS) examples/minimal/client_min.c $(HDRS)
-	$(CC) $(CFLAGS) -I$(SRC_DIR) $(SRCS) examples/minimal/client_min.c -o rdma_min_client $(LDFLAGS)
+minimal_client: $(SRCS) examples/c/minimal/client_min.c $(HDRS)
+	$(CC) $(CFLAGS) -I$(SRC_DIR) $(SRCS) examples/c/minimal/client_min.c -o rdma_min_client $(LDFLAGS)
 
 minimal: minimal_server minimal_client
 
@@ -71,6 +77,9 @@ tests: $(UNIT_TESTS)
 	@echo "[RUN] integration (log-based)"; $(TESTS_DIR)/test_run_integration.sh $(SERVER_IP)
 
 test: tests
+
+py-tests:
+	@$(PYTEST) -q
 
 # ---- Capture ----
 CAPTURE_HOST ?= rdma-server
@@ -148,15 +157,32 @@ lab-capture-live:
 
 # ---- Multipass lab ----
 lab-deploy:
-	bash setup_rdma_lab.sh
+	bash scripts/guide/01_multipass_setup.sh
 
 # To test 1G transfer
 # make lab-clean
-# CPUS=4 MEM=8G DISK=40G bash setup_rdma_lab.sh
+# CPUS=4 MEM=8G DISK=40G bash scripts/guide/01_multipass_setup.sh
 
 
 lab-clean:
 	multipass delete rdma-server rdma-client && multipass purge
 
+py-list-devices:
+	$(PYTHON) examples/py/00_list_devices.py
+
+py-query-ports:
+	$(PYTHON) examples/py/01_query_ports.py $(PY_DEV) $(PY_PORT)
+
+py-minimal-server:
+	$(PYTHON) examples/py/10_minimal_server.py $(PY_CM_PORT)
+
+py-minimal-client:
+	@if [ -z "$(PY_SERVER_IP)" ]; then \
+		echo "PY_SERVER_IP is required (e.g., make py-minimal-client PY_SERVER_IP=1.2.3.4)"; \
+		exit 1; \
+	fi
+	$(PYTHON) examples/py/11_minimal_client.py $(PY_SERVER_IP) $(PY_CM_PORT)
+
 .PHONY: tests test minimal minimal_server minimal_client rdma_bulk_server rdma_bulk_client tcp_server tcp_client \
-	perf-compare lab-capture lab-capture-live lab-capture-manual lab-capture-live-manual lab-deploy lab-clean
+	perf-compare lab-capture lab-capture-live lab-capture-manual lab-capture-live-manual lab-deploy lab-clean \
+	py-list-devices py-query-ports py-minimal-server py-minimal-client py-tests

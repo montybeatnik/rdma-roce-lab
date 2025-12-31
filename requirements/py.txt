@@ -1,0 +1,2 @@
+# Optional Python-only dependencies for examples/py.
+# pyverbs is provided by the system package (python3-pyverbs).
