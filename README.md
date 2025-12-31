@@ -1,154 +1,193 @@
 # RDMA RoCE Lab
 
-Minimal, modular C and Python samples using `librdmacm` + `libibverbs` for RDMA/RoCE learning.
+Minimal, modular C and Python samples using `librdmacm` + `libibverbs` for RDMA/RoCE learning.  
 Tested on Ubuntu 22.04 with SoftRoCE (rxe).
 
-## Hook
-If your data plane is the nervous system of an AI or storage stack, RDMA is the
-shortest path. This repo strips the path to essentials so you can see where
-efficiency appears, where it leaks, and why.
+> If your data plane is the nervous system of an AI or storage stack, RDMA is the shortest path.  
+> This repo strips the path to essentials so you can see where efficiency appears, where it leaks, and why.
+
+## Start here (choose your path)
+
+- **I want it working fast (10–15 min):** go to [Quickstart](#10-15-minute-quickstart-softroce)
+- **I want the clean mental model:** read [Mental model](#mental-model), then run [Lab 1: Minimal flow](#lab-1-minimal-flow)
+- **I want RDMA vs TCP behavior:** run [Lab 4: RDMA vs TCP](#lab-4-rdma-vs-tcp)
+- **I learn visually first:** open [Sims](#sims)
+- **I want Python (experimental):** see [Python status](#python-status-experimental)
+- **I’m here because of the blog series:** see [Related posts](#related-posts)
 
 ## Why this lab exists
-Modern AI fabrics treat the data center as the unit of compute, which means
-every inefficiency gets multiplied. RDMA reduces CPU overhead and memory copies,
-but the story does not end at peak throughput. Loss, retries, and stalled
-queues turn “fast” into “wasteful” when scale and congestion show up. This lab
-exists to make those tradeoffs visible: the deliberate setup costs, the fast
-path that follows, and the points where retransmissions or backpressure can
-erase the gains. It is a technical, hands-on way to connect protocol behavior
-to resource use: CPU cycles, cache pollution, power draw, and the cooling and
-water that follow. The goal is not moralizing. It is systems clarity. If you
-can see where time and work are lost, you can design paths that shed less of
-both.
 
-## Stakes
-RDMA reduces copies and CPU cycles, but it can hide cost in setup, signaling,
-and congestion. The goal here is not just “fast,” but fewer wasted interrupts,
-fewer round trips, and clearer intent in the data path.
+Modern AI fabrics treat the data center as the unit of compute — which means every inefficiency gets multiplied.  
+RDMA reduces CPU overhead and memory copies, but the story doesn’t end at peak throughput.
 
-## Mental Model
-RDMA is a contracts-first workflow:
-- **Memory is negotiated** (registered, keyed, and shared).
-- **Queues are shared state** (QP state machines and CQ bookkeeping).
-- **Completions are backpressure** (what you signal vs. what you ignore shapes throughput).
+Loss, retries, and stalled queues can turn “fast” into “wasteful” when scale and congestion show up.
+
+This lab exists to make those tradeoffs visible:
+- the deliberate setup costs,
+- the fast path that follows,
+- and the edge cases where backpressure, retransmissions, or signaling choices erase the gains.
+
+The goal isn’t moralizing. It’s systems clarity:  
+if you can see where time and work are lost, you can design paths that shed less of both.
+
+## Mental model
+
+RDMA is a **contracts-first workflow**:
+
+- **Memory is negotiated** (registered, keyed, shared)
+- **Queues are shared state** (QP state machines + CQ bookkeeping)
+- **Completions are backpressure** (what you signal vs. ignore shapes throughput)
 
 If you can map each transfer to these contracts, you can predict performance.
 
-## 10-minute quickstart
-Two VMs or two hosts on the same L2 network.
+---
 
-If you want a guided setup with Multipass on macOS:
+## 10–15 minute quickstart (SoftRoCE)
+
+**Goal:** two hosts/VMs on the same L2 network, run a minimal WRITE + READ demo.
+
+### Prereqs (run on BOTH hosts/VMs)
+
+```bash
+sudo apt update
+sudo apt install -y build-essential librdmacm-dev rdma-core ibverbs-providers ibverbs-utils perftest \
+  linux-modules-extra-$(uname -r)
+
+sudo modprobe rdma_rxe
+
+IF=$(ip -o route show default | awk '{print $5; exit}')
+sudo rdma link add rxe0 type rxe netdev "$IF" 2>/dev/null || true
+
+ibv_devices
+
+# Expected: you should see rxe0 in the device list.
+
+ubuntu@rdma-client:~/rdma-roce-lab$ ibv_devices
+    device                 node GUID
+    ------              ----------------
+    rxe0                505400fffe78e0a6
+```
+
+### Get the repo + build (run on BOTH hosts/VMs)
+
+```bash
+git clone https://github.com/montybeatnik/rdma-roce-lab.git
+cd rdma-roce-lab
+make
+```
+
+### Run (WRITE + READ)
+
+Server VM:
+
+```bash
+./scripts/guide/03_run_server_write_read.sh 7471
+```
+
+Client VM:
+
+```bash
+./scripts/guide/04_run_client_write_read.sh <SERVER_IP> 7471
+```
+
+Success check: the client log should include `RDMA_WRITE complete` and `RDMA_READ complete`.
+
+### Optional: guided Multipass setup (macOS)
+
 ```bash
 bash scripts/guide/01_multipass_setup.sh
 bash scripts/guide/02_build_c.sh
 ```
 
-Prereqs inside each VM:
-```bash
-sudo apt update
-sudo apt install -y build-essential librdmacm-dev rdma-core ibverbs-providers ibverbs-utils perftest \
-  linux-modules-extra-$(uname -r) python3 python3-venv python3-pyverbs
+### Troubleshooting (common misses)
 
-sudo modprobe rdma_rxe
-IF=$(ip -o route show default | awk '{print $5; exit}'); \
-  sudo rdma link add rxe0 type rxe netdev "$IF" 2>/dev/null || true
-ibv_devices
-```
+- `rxe0` missing: install `linux-modules-extra-$(uname -r)` and reboot, then rerun `modprobe rdma_rxe`.
+- `rdma link add` fails: confirm `rdma` is installed (`rdma-core`) and you picked a real NIC in `IF=...`.
+- `ibv_devices` is empty: verify you are inside the VM and `rxe0` exists before running the examples.
 
-Build:
-```bash
-make
-```
+## Python status (Experimental)
 
-Python venv (optional):
-```bash
-bash scripts/guide/00_setup_venv.sh
-source .venv/bin/activate
-```
+Python (pyverbs) is **experimental** in this repo. It may fail with tracebacks due to distro packaging, ABI mismatch, or `rdma-core` version differences. Use the C labs first, then try Python if you want the API shape.
 
-Python examples:
-```bash
-make py-list-devices
-make py-query-ports PY_DEV=rxe0 PY_PORT=1
-make py-minimal-server PY_CM_PORT=7471
-make py-minimal-client PY_SERVER_IP=<SERVER_IP> PY_CM_PORT=7471
-```
+See [docs/python-status.md](docs/python-status.md) for context and how to report issues. Python examples live in [examples/py/README.md](examples/py/README.md).
 
-Run (WRITE + READ):
-- Server VM:
-```bash
-./scripts/guide/03_run_server_write_read.sh 7471
-```
-- Client VM:
-```bash
-./scripts/guide/04_run_client_write_read.sh <SERVER_IP> 7471
-```
+## Sims
+
+HTML/Canvas sims you can open directly in a browser. Start with the ones below.
+
+- `sims/average_vs_spikes.html` — why averages hide microbursts.
+- `sims/microburst_queue_sim.html` — fan-in bursts filling a queue.
+- `sims/amplification_feedback_loop.html` — how small delays compound into runaway.
+- `sims/topology_overlay.html` — leaf–spine vs rails under overlay pressure.
+- `sims/topology_overlay_rail_aligned.html` — rail-aligned routing intuition.
+
 
 ## Labs (questions first)
 
-### What happens in the minimal flow?
-What you’ll learn: the end-to-end RDMA setup without extra diagnostics.  
-What to try: `examples/c/minimal/README.md`  
-What to observe: each step of address resolution, QP creation, and completion.
+### Lab 1: Minimal flow
 
-### How do one-sided writes and reads behave?
-What you’ll learn: the difference between WRITE and READ and how they map to CQEs.  
-What to try: `./scripts/guide/03_run_server_write_read.sh` and `./scripts/guide/04_run_client_write_read.sh`  
-What to observe: ordering, CQ signaling, and where CPU time is spent.
+- **What you’ll learn:** the cleanest RDMA setup path without extra diagnostics.
+- **Try:** `examples/c/minimal/README.md`
+- **Observe:** address resolution → QP creation → posting → completions.
 
-### How does immediate data change the flow?
-What you’ll learn: WRITE_WITH_IMM and how notifications change receiver behavior.  
-What to try: `./scripts/guide/05_run_server_write_imm.sh` and `./scripts/guide/06_run_client_write_imm.sh`  
-What to observe: how RECV posting pairs with immediate data.
+### Lab 2: One-sided ops (WRITE + READ)
 
-### How does RDMA compare to TCP on bulk transfers?
-What you’ll learn: where RDMA saves cycles and where it can stall.  
-What to try: `examples/c/rdma-bulk/README.md` and `examples/c/tcp/README.md`  
-What to observe: chunking, signaling, and throughput vs. CPU cost.
+- **What you’ll learn:** WRITE/READ behavior and how they map to CQEs.
+- **Try:** `./scripts/guide/03_run_server_write_read.sh` + `./scripts/guide/04_run_client_write_read.sh`
+- **Observe:** ordering, CQ signaling, where CPU time is spent.
 
-### How do these flows map to AI/ML systems?
-What you’ll learn: how RDMA primitives appear in training and serving paths.  
-What to try: `examples/c/ai-ml/README.md`  
-What to observe: which RDMA constraints show up as “pipeline inefficiency.”
+### Lab 3: Notifications (WRITE_WITH_IMM)
 
-### What does the RDMA device look like from Python?
-What you’ll learn: pyverbs device and port introspection.  
-What to try: `examples/py/README.md`  
-What to observe: device limits and port state before you build QPs.
+- **What you’ll learn:** immediate data and receiver-side behavior.
+- **Try:** `./scripts/guide/05_run_server_write_imm.sh` + `./scripts/guide/06_run_client_write_imm.sh`
+- **Observe:** RECV posting, notification semantics, CQ behavior.
 
-## Invitation
-Treat this repo as a lab notebook. If you see waste (extra copies, interrupts,
-or retries), open an issue with measurements and notes. If something breaks,
-it is usually the setup, not the verbs. (Usually.)
+### Lab 4: RDMA vs TCP
 
-## What’s Next
-- Read the docs index: `docs/README.md`
-- Skim architecture and narrative: `docs/architecture.md`, `docs/tutorial-narrative.md`
-- Follow the guided scripts: `docs/guide-scripts.md`
-- Tune and choose verbs: `docs/tuning.md`, `docs/verbs-choices.md`
-- Explore use-cases: `docs/ai-ml-use-cases.md`
-- Run tests: `make tests` (C) and `make py-tests` (Python)
-- Capture traffic: `scripts/lab_capture.sh`
-- Python quick sample: `examples/py/README.md`
+- **What you’ll learn:** where RDMA saves cycles and where it can still stall.
+- **Try:** `examples/c/rdma-bulk/README.md` and `examples/c/tcp/README.md`
+- **Observe:** chunking, signaling, throughput vs CPU cost.
 
-## TODO (optional)
-- Add a scripted benchmark harness that runs RDMA and TCP side by side.
+### Lab 5: AI/ML mapping
 
-## Related posts
-- [RDMA: the network powerhouse of an AI fabric (for now, anyway)](https://medium.com/@christopher_hern/rdma-the-network-powerhouse-of-an-ai-fabric-for-now-anyway-c50ce3f69879?source=your_stories_outbox---writer_outbox_published-----------------------------------------)
-- TODO: The cost of moving data
-- TODO: RDMA loss and recovery at scale
+- **What you’ll learn:** how RDMA primitives map to training/serving paths.
+- **Try:** `examples/c/ai-ml/README.md`
+- **Observe:** which constraints show up as “pipeline inefficiency.”
+
+### Lab 6: Python introspection (Experimental / optional)
+
+- **What you’ll learn:** device + port introspection before you build QPs.
+- **Try:** `examples/py/README.md` (may fail depending on your distro/rdma-core).
+- **Observe:** limits, port state, device capabilities.
+
+## Docs index
+
+- `docs/architecture.md` — module boundaries, data flow, and lifecycle.
+- `docs/guide-scripts.md` — what each guided script does and why.
+- `docs/on-the-wire.md` — packet capture notes for the lab flows.
+- `docs/verbs-choices.md` — which verbs map to which workloads.
+- `docs/tuning.md` — performance knobs and their tradeoffs.
+- `docs/testing.md` — unit and integration test guidance.
+- `docs/ai-ml-use-cases.md` — practical AI/ML scenarios.
+- `docs/python-status.md` — why pyverbs may fail and how to report it.
 
 ## Repo map
+
 ```
-.
-├─ README.md
-├─ Makefile
-├─ docs/
-├─ examples/
-│  ├─ c/
-│  └─ py/
-├─ scripts/
-├─ src/
-└─ tests/
+docs/       deeper explanations and references
+examples/   C + Python samples
+scripts/    guided scripts for setup and runs
+sims/       HTML/Canvas visual sims
+src/        shared C helpers
+tests/      unit + integration checks
 ```
+
+## Invitation
+
+If you find a gap, a confusing step, or a better mental model, open an issue. This repo is small on purpose so the feedback loop stays tight.
+
+## Related posts
+
+- [RDMA: the network powerhouse of an AI fabric (for now, anyway)](https://medium.com/@christopher_hern/rdma-the-network-powerhouse-of-an-ai-fabric-for-now-anyway-c50ce3f69879?source=your_stories_outbox---writer_outbox_published-----------------------------------------)
+- [The Cost of Moving Data](https://medium.com/@christopher_hern/the-cost-of-moving-data-28216bae734c)
+- **TODO:** Post 3 
