@@ -1,6 +1,6 @@
 
 CC=gcc
-CFLAGS=-O2 -std=c11 -Wall -D_GNU_SOURCE
+CFLAGS=-O2 -std=c11 -Wall -D_GNU_SOURCE -DRDMA_VERBOSE
 LDFLAGS=-lrdmacm -libverbs
 PYTHON?=python3
 PYTEST?=$(PYTHON) -m pytest

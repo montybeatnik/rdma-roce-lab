@@ -21,7 +21,7 @@ int main(int argc, char **argv)
     rdma_ctx c = {0};
     LOGF("SLOW", "create CM channel + listen");
     cm_create_channel_and_id(&c);
-    cm_server_listen(&c, port);
+    cm_server_listen(&c, NULL, port);
 
     struct rdma_cm_event *ev;
     LOGF("SLOW", "wait CONNECT_REQUEST");

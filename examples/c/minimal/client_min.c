@@ -28,7 +28,7 @@ int main(int argc, char **argv)
     LOGF("SLOW", "create CM channel + ID");
     cm_create_channel_and_id(&c);
     LOGF("SLOW", "resolve %s:%s", ip, port);
-    CHECK(cm_client_resolve(&c, ip, port), "resolve");
+    CHECK(cm_client_resolve(&c, ip, port, NULL), "resolve");
 
     LOGF("SLOW", "build PD/CQ/QP");
     build_pd_cq_qp(&c, IBV_QPT_RC, 64, 32, 32, 1);
