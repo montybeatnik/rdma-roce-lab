@@ -11,7 +11,7 @@ Tested on Ubuntu 22.04 with SoftRoCE (rxe).
 - **I want it working fast (10–15 min):** go to [Quickstart](#10-15-minute-quickstart-softroce)
 - **I want the clean mental model:** read [Mental model](#mental-model), then run [Lab 1: Minimal flow](#lab-1-minimal-flow)
 - **I want RDMA vs TCP behavior:** run [Lab 4: RDMA vs TCP](#lab-4-rdma-vs-tcp)
-- **I learn visually first:** open [Sims](#sims)
+- **I learn visually first:** open [sims/README.md](sims/README.md) or jump to [Sims](#sims) for mechanics sims (QP states, verbs pipeline, MR keys/DMA, two-sided vs one-sided, CQ signaling)
 - **I want Python (experimental):** see [Python status](#python-status-experimental)
 - **I’m here because of the blog series:** see [Related posts](#related-posts)
 
@@ -118,9 +118,14 @@ HTML/Canvas sims you can open directly in a browser. Start with the ones below.
 - `sims/average_vs_spikes.html` — why averages hide microbursts.
 - `sims/microburst_queue_sim.html` — fan-in bursts filling a queue.
 - `sims/amplification_feedback_loop.html` — how small delays compound into runaway.
+- `sims/zero_copy_vs_copy.html` — TCP copy path vs RDMA zero-copy.
+- `sims/rdma_slow_fast_path.html` — slow setup vs fast transfer path.
+- `sims/cq_polling_vs_events.html` — CQ polling vs event-driven.
+- `sims/loss_amplification_go_back_n.html` — retransmit amplification in a pipeline.
 - `sims/topology_overlay.html` — leaf–spine vs rails under overlay pressure.
 - `sims/topology_overlay_rail_aligned.html` — rail-aligned routing intuition.
 
+See [sims/README.md](sims/README.md) for the full list and recording tips.
 
 ## Labs (questions first)
 
