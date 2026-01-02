@@ -1,0 +1,482 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Topology Tradeoffs and Fat Tree</title>
+  <link rel="stylesheet" href="shared.css"/>
+  <style>
+    :root{
+      --wrap-max:1200px;
+      --grid-cols:1fr 360px;
+      --canvas-h:580px;
+      --canvas-h-sm:520px;
+    }
+    @media (max-width: 1020px){
+      .grid{grid-template-columns:1fr;}
+      canvas{height:520px;}
+    }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Topology Tradeoffs: Leaf-Spine, Fat Tree, Rails</h1>
+  <p class="sub">
+    Compare simplified overlays for common GPU fabrics. This is a representative diagram
+    that shows where pressure collects under different traffic patterns.
+  </p>
+
+  <div class="grid">
+    <div class="card">
+      <div class="canvasWrap"><canvas id="c"></canvas></div>
+    </div>
+
+    <div class="card controls">
+      <div class="ctl">
+        <label><span>How to Use This</span><span class="pill">Guide</span></label>
+        <div class="note">
+          Pick a topology, then flip traffic patterns to see where utilization concentrates.
+          Link color/width = hotter utilization. Watch <strong>Hottest link</strong> and <strong>Avg link util</strong>.
+          In rails mode, cross-rail flows light the purple spine links (higher contention).
+        </div>
+      </div>
+
+      <div class="ctl">
+        <label><span>Topology</span><span class="pill" id="topoLabel">Leaf-Spine</span></label>
+        <div class="tog">
+          <div class="btn primary" id="btnLeaf">Leaf-Spine</div>
+          <div class="btn" id="btnFat">Fat Tree</div>
+          <div class="btn" id="btnRails">Rail-Oriented</div>
+        </div>
+        <div class="note" id="topoNote">
+          Leaf-spine is simple and scalable, but shared spines can become hotspots.
+        </div>
+      </div>
+
+      <div class="ctl">
+        <label><span>Traffic Pattern</span><span class="pill" id="patLabel">All-to-All</span></label>
+        <div class="tog">
+          <div class="btn primary" id="patAll">All-to-All</div>
+          <div class="btn" id="patShuffle">Shuffle</div>
+          <div class="btn" id="patFan">Fan-in</div>
+          <div class="btn" id="patLocal">Rack-Local</div>
+        </div>
+      </div>
+
+      <div class="ctl">
+        <label><span>Racks (logical)</span><strong><span id="racksVal">12</span></strong></label>
+        <input id="racks" type="range" min="4" max="16" step="1" value="12"/>
+      </div>
+
+      <div class="ctl">
+        <label><span>Oversub Ratio</span><strong><span id="overVal">2.0:1</span></strong></label>
+        <input id="oversub" type="range" min="1" max="4" step="0.5" value="2"/>
+        <div class="note">Higher oversub means less uplink capacity per rack.</div>
+      </div>
+
+      <div class="ctl">
+        <label><span>Intensity</span><strong><span id="intVal">1.00</span></strong></label>
+        <input id="intensity" type="range" min="0.60" max="1.60" step="0.05" value="1.00"/>
+      </div>
+
+      <div class="ctl">
+        <label><span>Rail Alignment</span><strong><span id="alignVal">70%</span></strong></label>
+        <input id="align" type="range" min="40" max="90" step="5" value="70"/>
+        <div class="note">Only affects rail mode (more same-rail traffic).</div>
+      </div>
+
+      <div class="ctl">
+        <div class="tog">
+          <div class="btn primary" id="toggleRun">Pause</div>
+          <div class="btn danger" id="reset">Reset</div>
+        </div>
+        <div class="kv">
+          <span>Avg link util</span><strong><span id="avgUtil">0%</span></strong>
+          <span>Hottest link</span><strong><span id="hotUtil">0%</span></strong>
+          <span>Path diversity</span><strong><span id="pathDiv">0</span></strong>
+          <span>Cross-rail</span><strong><span id="crossRail">0%</span></strong>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="shared.js"></script>
+<script>
+(() => {
+  const { canvas, ctx } = SimUI.setupCanvas('c');
+
+  const el = {
+    topoLabel: document.getElementById('topoLabel'),
+    topoNote: document.getElementById('topoNote'),
+    btnLeaf: document.getElementById('btnLeaf'),
+    btnFat: document.getElementById('btnFat'),
+    btnRails: document.getElementById('btnRails'),
+    patLabel: document.getElementById('patLabel'),
+    patAll: document.getElementById('patAll'),
+    patShuffle: document.getElementById('patShuffle'),
+    patFan: document.getElementById('patFan'),
+    patLocal: document.getElementById('patLocal'),
+    racks: document.getElementById('racks'),
+    racksVal: document.getElementById('racksVal'),
+    oversub: document.getElementById('oversub'),
+    overVal: document.getElementById('overVal'),
+    intensity: document.getElementById('intensity'),
+    intVal: document.getElementById('intVal'),
+    align: document.getElementById('align'),
+    alignVal: document.getElementById('alignVal'),
+    toggleRun: document.getElementById('toggleRun'),
+    reset: document.getElementById('reset'),
+    avgUtil: document.getElementById('avgUtil'),
+    hotUtil: document.getElementById('hotUtil'),
+    pathDiv: document.getElementById('pathDiv'),
+    crossRail: document.getElementById('crossRail')
+  };
+
+  const bindRange = SimUI.bindRange;
+  bindRange(el.racks, el.racksVal, v => String(v));
+  bindRange(el.oversub, el.overVal, v => `${Number(v).toFixed(1)}:1`);
+  bindRange(el.intensity, el.intVal, v => Number(v).toFixed(2));
+  bindRange(el.align, el.alignVal, v => `${v}%`);
+
+  let topo = 'leaf';
+  let pattern = 'all';
+  let running = true;
+  let t = 0;
+  let links = [];
+  let nodes = [];
+  let crossRailPct = 0;
+
+  const topoNotes = {
+    leaf: 'Leaf-spine is simple and scalable, but shared spines can become hotspots.',
+    fat: 'Fat tree adds tiers and more parallel paths for higher bisection bandwidth.',
+    rails: 'Rail-oriented separates planes; cross-rail traffic hits the spine.'
+  };
+
+  function setTopo(next){
+    topo = next;
+    el.topoLabel.textContent = topo === 'leaf' ? 'Leaf-Spine' : topo === 'fat' ? 'Fat Tree' : 'Rail-Oriented';
+    el.btnLeaf.classList.toggle('primary', topo === 'leaf');
+    el.btnFat.classList.toggle('primary', topo === 'fat');
+    el.btnRails.classList.toggle('primary', topo === 'rails');
+    el.topoNote.textContent = topoNotes[topo];
+    rebuild();
+  }
+  function setPattern(next){
+    pattern = next;
+    el.patLabel.textContent = next === 'all' ? 'All-to-All' : next === 'shuffle' ? 'Shuffle' : next === 'fanin' ? 'Fan-in' : 'Rack-Local';
+    el.patAll.classList.toggle('primary', next === 'all');
+    el.patShuffle.classList.toggle('primary', next === 'shuffle');
+    el.patFan.classList.toggle('primary', next === 'fanin');
+    el.patLocal.classList.toggle('primary', next === 'local');
+    rebuild();
+  }
+
+  el.btnLeaf.onclick = () => setTopo('leaf');
+  el.btnFat.onclick = () => setTopo('fat');
+  el.btnRails.onclick = () => setTopo('rails');
+  el.patAll.onclick = () => setPattern('all');
+  el.patShuffle.onclick = () => setPattern('shuffle');
+  el.patFan.onclick = () => setPattern('fanin');
+  el.patLocal.onclick = () => setPattern('local');
+
+  el.toggleRun.onclick = () => {
+    running = !running;
+    el.toggleRun.textContent = running ? 'Pause' : 'Play';
+  };
+
+  el.reset.onclick = () => rebuild();
+
+  function clamp(x,a,b){ return Math.max(a, Math.min(b, x)); }
+  function lerp(a,b,p){ return a + (b-a) * p; }
+
+  function randomChoice(n){ return Math.floor(Math.random() * n); }
+
+  function buildFlows(){
+    const n = Number(el.racks.value);
+    const intensity = Number(el.intensity.value);
+    const flows = [];
+    const localProb = 0.7;
+
+    function add(src, dst, w){
+      if(src === dst) return;
+      flows.push({ src, dst, w });
+    }
+
+    if(pattern === 'all'){
+      for(let i=0;i<n;i++){
+        for(let j=0;j<n;j++){
+          if(i !== j) add(i, j, intensity);
+        }
+      }
+    } else if(pattern === 'shuffle'){
+      for(let i=0;i<n;i++){
+        add(i, (i+1)%n, intensity * 1.2);
+      }
+    } else if(pattern === 'fanin'){
+      const target = 0;
+      for(let i=1;i<n;i++){
+        add(i, target, intensity * 1.4);
+      }
+    } else {
+      for(let i=0;i<n;i++){
+        const sameGroup = Math.random() < localProb;
+        const groupStart = Math.floor(i / 4) * 4;
+        let dst = i;
+        if(sameGroup){
+          dst = groupStart + randomChoice(Math.min(4, n - groupStart));
+        } else {
+          dst = randomChoice(n);
+        }
+        add(i, dst, intensity);
+      }
+    }
+
+    return flows;
+  }
+
+  function buildTopology(){
+    const w = canvas.getBoundingClientRect().width;
+    const h = canvas.getBoundingClientRect().height;
+    const margin = 30;
+
+    nodes = [];
+    links = [];
+    crossRailPct = 0;
+
+    if(topo === 'leaf'){
+      const leaves = 4;
+      const spines = 2;
+      const leafY = h * 0.68;
+      const spineY = h * 0.30;
+      for(let i=0;i<spines;i++){
+        nodes.push({ id: `s${i}`, x: lerp(margin, w - margin, (i+1)/(spines+1)), y: spineY, type:'spine' });
+      }
+      for(let i=0;i<leaves;i++){
+        nodes.push({ id: `l${i}`, x: lerp(margin, w - margin, (i+1)/(leaves+1)), y: leafY, type:'leaf' });
+      }
+      for(let i=0;i<leaves;i++){
+        for(let j=0;j<spines;j++){
+          links.push({ a:`l${i}`, b:`s${j}`, load:0, cap:1, kind:'uplink' });
+        }
+      }
+    } else if(topo === 'fat'){
+      const pods = 4;
+      const edgesPerPod = 2;
+      const aggsPerPod = 2;
+      const cores = 2;
+
+      const edgeY = h * 0.72;
+      const aggY = h * 0.48;
+      const coreY = h * 0.24;
+
+      for(let c=0;c<cores;c++){
+        nodes.push({ id:`c${c}`, x: lerp(margin, w - margin, (c+1)/(cores+1)), y: coreY, type:'core' });
+      }
+
+      for(let p=0;p<pods;p++){
+        const podLeft = lerp(margin, w - margin, p / pods) + 40;
+        const podRight = lerp(margin, w - margin, (p+1) / pods) - 40;
+        for(let a=0;a<aggsPerPod;a++){
+          nodes.push({ id:`a${p}-${a}`, x: lerp(podLeft, podRight, (a+1)/(aggsPerPod+1)), y: aggY, type:'agg' });
+        }
+        for(let e=0;e<edgesPerPod;e++){
+          nodes.push({ id:`e${p}-${e}`, x: lerp(podLeft, podRight, (e+1)/(edgesPerPod+1)), y: edgeY, type:'edge' });
+        }
+      }
+
+      for(const edge of nodes.filter(n=>n.type==='edge')){
+        const pod = edge.id.split('-')[0].replace('e','');
+        for(const agg of nodes.filter(n=>n.type==='agg' && n.id.startsWith(`a${pod}-`))){
+          links.push({ a: edge.id, b: agg.id, load:0, cap:1, kind:'uplink' });
+        }
+      }
+      for(const agg of nodes.filter(n=>n.type==='agg')){
+        for(const core of nodes.filter(n=>n.type==='core')){
+          links.push({ a: agg.id, b: core.id, load:0, cap:1.2, kind:'core' });
+        }
+      }
+    } else {
+      const leaves = 4;
+      const rails = 2;
+      const leafY = h * 0.70;
+      const railY = h * 0.34;
+      for(let r=0;r<rails;r++){
+        nodes.push({ id:`r${r}`, x: lerp(margin, w - margin, (r+1)/(rails+1)), y: railY, type:'rail' });
+      }
+      nodes.push({ id:'spineX', x: w * 0.5, y: h * 0.18, type:'spine' });
+      for(let i=0;i<leaves;i++){
+        nodes.push({ id:`l${i}`, x: lerp(margin, w - margin, (i+1)/(leaves+1)), y: leafY, type:'leaf' });
+      }
+      for(let i=0;i<leaves;i++){
+        const rail = i % 2;
+        links.push({ a:`l${i}`, b:`r${rail}`, load:0, cap:1.1, kind:'rail' });
+      }
+      for(let r=0;r<rails;r++){
+        links.push({ a:`r${r}`, b:'spineX', load:0, cap:0.7, kind:'cross' });
+      }
+    }
+  }
+
+  function linkBetween(a,b){
+    return links.find(L => (L.a === a && L.b === b) || (L.a === b && L.b === a));
+  }
+
+  function applyTraffic(){
+    links.forEach(l => { l.load = 0; });
+    const flows = buildFlows();
+    const oversub = Number(el.oversub.value);
+    const align = Number(el.align.value) / 100;
+
+    let crossRail = 0;
+    let totalFlows = 0;
+
+    if(topo === 'leaf'){
+      const spines = 2;
+      for(const f of flows){
+        const spine = (f.src + f.dst) % spines;
+        const lA = `l${f.src % 4}`;
+        const lB = `l${f.dst % 4}`;
+        linkBetween(lA, `s${spine}`).load += f.w * oversub;
+        linkBetween(lB, `s${spine}`).load += f.w * oversub;
+      }
+    } else if(topo === 'fat'){
+      const podCount = 4;
+      for(const f of flows){
+        const podSrc = Math.floor(f.src / 4) % podCount;
+        const podDst = Math.floor(f.dst / 4) % podCount;
+        const edgeSrc = `e${podSrc}-${f.src % 2}`;
+        const edgeDst = `e${podDst}-${f.dst % 2}`;
+        const aggSrc = `a${podSrc}-${(f.src + f.dst) % 2}`;
+        const aggDst = `a${podDst}-${(f.src + f.dst + 1) % 2}`;
+        if(podSrc === podDst){
+          linkBetween(edgeSrc, aggSrc).load += f.w * oversub;
+          linkBetween(edgeDst, aggSrc).load += f.w * oversub;
+        } else {
+          const core = `c${(f.src + f.dst) % 2}`;
+          linkBetween(edgeSrc, aggSrc).load += f.w * oversub;
+          linkBetween(aggSrc, core).load += f.w * oversub * 0.9;
+          linkBetween(aggDst, core).load += f.w * oversub * 0.9;
+          linkBetween(edgeDst, aggDst).load += f.w * oversub;
+        }
+      }
+    } else {
+      for(const f of flows){
+        totalFlows++;
+        const railSrc = (f.src % 4) % 2;
+        const railDst = (f.dst % 4) % 2;
+        const srcLeaf = `l${f.src % 4}`;
+        const dstLeaf = `l${f.dst % 4}`;
+        const sameRail = railSrc === railDst || Math.random() < align;
+        if(sameRail){
+          linkBetween(srcLeaf, `r${railSrc}`).load += f.w * oversub;
+          linkBetween(dstLeaf, `r${railSrc}`).load += f.w * oversub;
+        } else {
+          crossRail++;
+          linkBetween(srcLeaf, `r${railSrc}`).load += f.w * oversub;
+          linkBetween(dstLeaf, `r${railDst}`).load += f.w * oversub;
+          linkBetween(`r${railSrc}`, 'spineX').load += f.w * oversub * 1.2;
+          linkBetween(`r${railDst}`, 'spineX').load += f.w * oversub * 1.2;
+        }
+      }
+    }
+
+    crossRailPct = totalFlows ? Math.round((crossRail / totalFlows) * 100) : 0;
+  }
+
+  function colorForUtil(u, kind){
+    if(u > 0.9) return 'rgba(255,92,92,0.9)';
+    if(kind === 'cross') return `rgba(168,85,247,${0.25 + u * 0.6})`;
+    if(kind === 'rail') return `rgba(56,189,248,${0.25 + u * 0.6})`;
+    if(kind === 'core') return `rgba(110,231,183,${0.25 + u * 0.6})`;
+    if(u < 0.35) return 'rgba(77,163,255,0.35)';
+    if(u < 0.65) return 'rgba(110,231,183,0.6)';
+    return 'rgba(255,176,32,0.75)';
+  }
+
+  function draw(){
+    const w = canvas.getBoundingClientRect().width;
+    const h = canvas.getBoundingClientRect().height;
+    ctx.clearRect(0,0,w,h);
+    ctx.fillStyle = '#0a0c0f';
+    ctx.fillRect(0,0,w,h);
+
+    let totalUtil = 0;
+    let maxUtil = 0;
+
+    for(const L of links){
+      const a = nodes.find(n => n.id === L.a);
+      const b = nodes.find(n => n.id === L.b);
+      if(!a || !b) continue;
+      const util = clamp(L.load / Math.max(0.001, L.cap), 0, 1.2);
+      totalUtil += util;
+      maxUtil = Math.max(maxUtil, util);
+      ctx.strokeStyle = colorForUtil(util, L.kind);
+      ctx.lineWidth = 2 + util * 2;
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.stroke();
+    }
+
+    // Nodes
+    for(const n of nodes){
+      ctx.fillStyle = n.type === 'spine' || n.type === 'core' ? 'rgba(168,85,247,0.9)' :
+                      n.type === 'rail' ? 'rgba(56,189,248,0.9)' :
+                      'rgba(77,163,255,0.9)';
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, 6, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Labels for clarity
+    ctx.fillStyle = 'rgba(167,179,197,0.85)';
+    ctx.font = '11px system-ui, -apple-system, Segoe UI, Roboto, Arial';
+    if(topo === 'leaf'){
+      ctx.fillText('Spines', 24, h * 0.28);
+      ctx.fillText('Leaves', 24, h * 0.68);
+    } else if(topo === 'fat'){
+      ctx.fillText('Tier-3', 24, h * 0.22);
+      ctx.fillText('Tier-2', 24, h * 0.48);
+      ctx.fillText('Tier-1', 24, h * 0.72);
+    } else {
+      ctx.fillText('Rail A/B', 24, h * 0.34);
+      ctx.fillText('Cross-rail', 24, h * 0.16);
+    }
+
+    const avg = links.length ? (totalUtil / links.length) : 0;
+    el.avgUtil.textContent = `${Math.round(avg * 100)}%`;
+    el.hotUtil.textContent = `${Math.round(maxUtil * 100)}%`;
+    el.pathDiv.textContent = topo === 'fat' ? '4+' : topo === 'leaf' ? '2' : '1-2';
+    el.crossRail.textContent = topo === 'rails' ? `${crossRailPct}%` : '0%';
+
+    ctx.fillStyle = 'rgba(167,179,197,0.8)';
+    ctx.font = '12px system-ui, -apple-system, Segoe UI, Roboto, Arial';
+    ctx.fillText('Representative fabric diagram (not to scale)', 22, h - 18);
+  }
+
+  function rebuild(){
+    buildTopology();
+    applyTraffic();
+  }
+
+  function step(){
+    if(running){
+      t += 0.01;
+      applyTraffic();
+    }
+    draw();
+    requestAnimationFrame(step);
+  }
+
+  el.racks.addEventListener('input', rebuild);
+  el.oversub.addEventListener('input', rebuild);
+  el.intensity.addEventListener('input', rebuild);
+  el.align.addEventListener('input', rebuild);
+
+  rebuild();
+  step();
+})();
+</script>
+</body>
+</html>

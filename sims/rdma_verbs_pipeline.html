@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>RDMA Verbs Pipeline</title>
+  <link rel="stylesheet" href="shared.css"/>
+  <style>
+    :root{--grid-cols:1fr 360px;--canvas-h:520px;--canvas-h-sm:460px;}
+    svg{
+      width:100%;
+      height:520px;
+      display:block;
+      background:#0a0c0f;
+      border-radius:12px;
+      border:1px solid var(--line2);
+      text-rendering:geometricPrecision;
+    }
+    .lane{fill:#0d1117;stroke:#1f2937;stroke-width:1;shape-rendering:crispEdges;}
+    .laneLabel{fill:#a7b3c5;font-size:12px;font-family:system-ui,sans-serif;text-rendering:geometricPrecision;}
+    .card{fill:#11151b;stroke:#2b3442;stroke-width:1.5;rx:8;shape-rendering:crispEdges;}
+    .card.active{stroke:#4da3ff;stroke-width:2;}
+    .card.done{stroke:#6ee7b7;stroke-width:2;}
+    .label{fill:#e8eef7;font-size:11px;font-family:system-ui,sans-serif;text-rendering:geometricPrecision;}
+    .hint{fill:#a7b3c5;font-size:10px;font-family:system-ui,sans-serif;text-rendering:geometricPrecision;}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>RDMA Verbs Pipeline (Minimal RC)</h1>
+    <p class="sub">Step through the minimal RC flow: CM handshake, verbs objects, posting, and CQEs.</p>
+
+    <div class="grid">
+      <div class="card">
+        <div class="stage">
+          <svg viewBox="0 0 720 520" aria-label="RDMA verbs pipeline">
+            <rect class="lane" x="20" y="40" width="200" height="440"></rect>
+            <rect class="lane" x="260" y="40" width="200" height="440"></rect>
+            <rect class="lane" x="500" y="40" width="200" height="440"></rect>
+            <text class="laneLabel" x="40" y="30">App / Userspace</text>
+            <text class="laneLabel" x="300" y="30">Kernel / CM</text>
+            <text class="laneLabel" x="540" y="30">NIC (RNIC)</text>
+
+            <rect id="cmid" class="card" x="60" y="70" width="120" height="36"></rect>
+            <text class="label" x="85" y="92">CM ID</text>
+
+            <rect id="ctx" class="card" x="60" y="120" width="120" height="36"></rect>
+            <text class="label" x="75" y="142">Context</text>
+
+            <rect id="pd" class="card" x="60" y="170" width="120" height="36"></rect>
+            <text class="label" x="95" y="192">PD</text>
+
+            <rect id="mr" class="card" x="60" y="220" width="120" height="36"></rect>
+            <text class="label" x="95" y="242">MR</text>
+
+            <rect id="cq" class="card" x="60" y="270" width="120" height="36"></rect>
+            <text class="label" x="95" y="292">CQ</text>
+
+            <rect id="qp" class="card" x="60" y="320" width="120" height="36"></rect>
+            <text class="label" x="95" y="342">QP</text>
+
+            <rect id="cm" class="card" x="300" y="90" width="120" height="36"></rect>
+            <text class="label" x="320" y="112">CM Ops</text>
+
+            <rect id="bind" class="card" x="300" y="140" width="120" height="36"></rect>
+            <text class="label" x="310" y="162">Listen/Accept</text>
+
+            <rect id="connect" class="card" x="300" y="190" width="120" height="36"></rect>
+            <text class="label" x="320" y="212">Connect</text>
+
+            <rect id="post" class="card" x="300" y="270" width="120" height="36"></rect>
+            <text class="label" x="315" y="292">Post WRs</text>
+
+            <rect id="cqe" class="card" x="300" y="340" width="120" height="36"></rect>
+            <text class="label" x="330" y="362">CQE</text>
+
+            <rect id="rnic" class="card" x="540" y="210" width="120" height="36"></rect>
+            <text class="label" x="565" y="232">Exec WRs</text>
+
+            <rect id="dma" class="card" x="540" y="260" width="120" height="36"></rect>
+            <text class="label" x="565" y="282">DMA</text>
+
+            <rect id="notify" class="card" x="540" y="320" width="120" height="36"></rect>
+            <text class="label" x="565" y="342">CQE</text>
+
+            <text class="hint" x="60" y="380">slow path</text>
+            <text class="hint" x="300" y="380">fast path</text>
+            <text class="hint" x="540" y="380">fast path</text>
+          </svg>
+        </div>
+      </div>
+
+      <div class="card controls">
+        <div class="ctl">
+          <label><span>Current step</span><strong><span id="stepName">Create CM ID</span></strong></label>
+          <div class="note" id="stepNote"></div>
+          <div class="note" id="stepCount"></div>
+        </div>
+
+        <div class="ctl">
+          <label><span>Lane focus</span><span class="pill" id="lane">App</span></label>
+          <div class="note" id="laneNote"></div>
+        </div>
+
+        <div class="ctl">
+          <label><span>Controls</span></label>
+          <div class="tog">
+            <div class="btn primary" id="btnStep">Step</div>
+            <div class="btn" id="btnBack">Back</div>
+            <div class="btn" id="btnReset">Reset</div>
+            <div class="btn" id="btnAuto">Autoplay</div>
+          </div>
+          <div class="note">Legend: verbs create intent; NIC executes work requests; CQEs confirm completion.</div>
+        </div>
+
+        <div class="ctl">
+          <div class="note">Disclaimer: conceptual model; real providers may differ.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script src="shared.js"></script>
+<script>
+/**
+ * State machine: 8 steps; model vars: stepIndex, autoplay; render updates: card highlights, step text, lane, counter.
+ */
+(() => {
+  const cards = {
+    cmid: document.getElementById('cmid'),
+    ctx: document.getElementById('ctx'),
+    pd: document.getElementById('pd'),
+    mr: document.getElementById('mr'),
+    cq: document.getElementById('cq'),
+    qp: document.getElementById('qp'),
+    cm: document.getElementById('cm'),
+    bind: document.getElementById('bind'),
+    connect: document.getElementById('connect'),
+    post: document.getElementById('post'),
+    cqe: document.getElementById('cqe'),
+    rnic: document.getElementById('rnic'),
+    dma: document.getElementById('dma'),
+    notify: document.getElementById('notify'),
+  };
+
+  const el = {
+    stepName: document.getElementById('stepName'),
+    stepNote: document.getElementById('stepNote'),
+    stepCount: document.getElementById('stepCount'),
+    lane: document.getElementById('lane'),
+    laneNote: document.getElementById('laneNote'),
+    btnStep: document.getElementById('btnStep'),
+    btnBack: document.getElementById('btnBack'),
+    btnReset: document.getElementById('btnReset'),
+    btnAuto: document.getElementById('btnAuto'),
+  };
+
+  const steps = [
+    {name: 'Create CM ID', active: ['cmid'], done: [], lane: 'App', note: 'rdma_create_event_channel + rdma_create_id (slow path).'},
+    {name: 'Resolve address/route', active: ['cm'], done: ['cmid'], lane: 'Kernel/CM', note: 'rdma_resolve_addr + rdma_resolve_route (slow path).'},
+    {name: 'Server listen/accept', active: ['bind'], done: ['cmid','cm'], lane: 'Kernel/CM', note: 'rdma_bind_addr, rdma_listen, rdma_get_request, rdma_accept.'},
+    {name: 'Client connect', active: ['connect'], done: ['cmid','cm','bind'], lane: 'Kernel/CM', note: 'rdma_connect (slow path handshake).'},
+    {name: 'Create verbs objects', active: ['ctx','pd','mr','cq','qp'], done: ['cmid','cm','bind','connect'], lane: 'App', note: 'Allocate PD/CQ/QP and register MR.'},
+    {name: 'Post receives', active: ['post'], done: ['cmid','cm','bind','connect','ctx','pd','mr','cq','qp'], lane: 'App', note: 'post_recv to prepare two-sided operations (fast path).'},
+    {name: 'Post send/write/read', active: ['post','rnic'], done: ['cmid','cm','bind','connect','ctx','pd','mr','cq','qp'], lane: 'NIC', note: 'Work requests are enqueued; NIC executes (fast path).'},
+    {name: 'DMA and completion', active: ['dma','notify','cqe'], done: ['cmid','cm','bind','connect','ctx','pd','mr','cq','qp','post','rnic'], lane: 'NIC', note: 'DMA moves bytes; CQE confirms completion.'},
+  ];
+
+  const model = {
+    stepIndex: 0,
+    autoplay: false,
+  };
+
+  let timer = null;
+  const renderHud = SimUI.createDebugHud(() => ({
+    stepIndex: model.stepIndex,
+    totalSteps: steps.length,
+    lane: steps[model.stepIndex].lane,
+    autoplay: model.autoplay,
+  }));
+
+  function render() {
+    const step = steps[model.stepIndex];
+    Object.values(cards).forEach(c => c.classList.remove('active','done'));
+    step.done.forEach(id => cards[id].classList.add('done'));
+    step.active.forEach(id => cards[id].classList.add('active'));
+
+    el.stepName.textContent = step.name;
+    el.stepNote.textContent = step.note;
+    el.stepCount.textContent = `Step ${model.stepIndex + 1} / ${steps.length}`;
+    el.lane.textContent = step.lane;
+    el.laneNote.textContent = step.lane === 'NIC'
+      ? 'Fast path: hardware executes work requests.'
+      : (step.lane === 'Kernel/CM'
+        ? 'Slow path: connection setup and CM events.'
+        : 'Userspace orchestrates objects and posts work.');
+    el.btnAuto.textContent = model.autoplay ? 'Stop' : 'Autoplay';
+    renderHud();
+  }
+
+  function stopAutoplay() {
+    if (timer) clearInterval(timer);
+    timer = null;
+    model.autoplay = false;
+  }
+
+  function stepForward() {
+    if (model.stepIndex < steps.length - 1) {
+      model.stepIndex += 1;
+    } else {
+      stopAutoplay();
+    }
+    render();
+  }
+
+  function stepBack() {
+    model.stepIndex = Math.max(0, model.stepIndex - 1);
+    render();
+  }
+
+  function reset() {
+    model.stepIndex = 0;
+    stopAutoplay();
+    render();
+  }
+
+  function toggleAuto() {
+    if (model.autoplay) {
+      stopAutoplay();
+      render();
+      return;
+    }
+    model.autoplay = true;
+    render();
+    timer = setInterval(() => {
+      if (model.stepIndex >= steps.length - 1) {
+        stopAutoplay();
+        render();
+      } else {
+        model.stepIndex += 1;
+        render();
+      }
+    }, 1300);
+  }
+
+  el.btnStep.onclick = stepForward;
+  el.btnBack.onclick = stepBack;
+  el.btnReset.onclick = reset;
+  el.btnAuto.onclick = toggleAuto;
+
+  render();
+})();
+</script>
+</body>
+</html>

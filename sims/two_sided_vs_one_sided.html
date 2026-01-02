@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Two-Sided vs One-Sided Operations</title>
+  <link rel="stylesheet" href="shared.css"/>
+  <style>
+    :root{--grid-cols:1fr 360px;--canvas-h:520px;--canvas-h-sm:460px;}
+    svg{width:100%;height:520px;display:block;background:#0a0c0f;border-radius:12px;border:1px solid var(--line2);}
+    .panel{fill:#11151b;stroke:#2b3442;stroke-width:1.5;rx:10;}
+    .label{fill:#e8eef7;font-size:12px;font-family:system-ui,sans-serif;}
+    .muted{fill:#a7b3c5;font-size:11px;font-family:system-ui,sans-serif;}
+    .cpu{fill:#ffb020;}
+    .cpu.idle{fill:#2b3442;}
+    .flow{stroke:#4da3ff;stroke-width:2;marker-end:url(#arrow);opacity:0.2;}
+    .flow.active{opacity:1;}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Two-Sided vs One-Sided (Receiver Involvement)</h1>
+    <p class="sub">Compare SEND/RECV to RDMA WRITE/READ: who needs to post work, and who burns CPU.</p>
+
+    <div class="grid">
+      <div class="card">
+        <div class="stage">
+          <svg viewBox="0 0 720 520" aria-label="Two-sided vs one-sided">
+            <defs>
+              <marker id="arrow" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+                <polygon points="0 0, 10 3.5, 0 7" fill="#4da3ff"></polygon>
+              </marker>
+            </defs>
+            <rect class="panel" x="30" y="60" width="300" height="400"></rect>
+            <rect class="panel" x="390" y="60" width="300" height="400"></rect>
+
+            <text class="label" x="110" y="90">Two-sided (SEND/RECV)</text>
+            <text class="label" x="480" y="90">One-sided (WRITE/READ)</text>
+
+            <text class="muted" x="60" y="140">Receiver CPU</text>
+            <rect id="cpuTwo" class="cpu" x="60" y="150" width="80" height="20"></rect>
+            <text class="muted" x="60" y="180">Needs RECV posted</text>
+
+            <text class="muted" x="420" y="140">Receiver CPU</text>
+            <rect id="cpuOne" class="cpu" x="420" y="150" width="80" height="20"></rect>
+            <text class="muted" x="420" y="180">Passive (MR + rkey)</text>
+
+            <text id="statusTwo" class="label" x="60" y="240">Awaiting RECV</text>
+            <text id="statusOne" class="label" x="420" y="240">Ready</text>
+
+            <line id="flowTwo" class="flow" x1="80" y1="260" x2="280" y2="260"></line>
+            <line id="flowOne" class="flow" x1="440" y1="260" x2="640" y2="260"></line>
+          </svg>
+        </div>
+      </div>
+
+      <div class="card controls">
+        <div class="ctl">
+          <label><span>Receiver posted RECV?</span><strong><span id="recvVal">Yes</span></strong></label>
+          <div class="tog">
+            <div class="btn primary" id="recvYes">Yes</div>
+            <div class="btn" id="recvNo">No</div>
+          </div>
+        </div>
+
+        <div class="ctl">
+          <label><span>Signaled sends ratio</span><strong><span id="sigVal">1:1</span></strong></label>
+          <input id="sigRatio" type="range" min="1" max="16" step="1" value="1"/>
+        </div>
+
+        <div class="ctl">
+          <label><span>Current step</span><strong><span id="stepName">Post WRs</span></strong></label>
+          <div class="note" id="stepNote"></div>
+          <div class="note" id="stepCount"></div>
+        </div>
+
+        <div class="ctl">
+          <div class="kv">
+            <span>Posted WRs</span><strong><span id="posted">0</span></strong>
+            <span>CQEs generated</span><strong><span id="cqes">0</span></strong>
+            <span>Receiver CPU involvement</span><strong><span id="cpuEst">0%</span></strong>
+          </div>
+        </div>
+
+        <div class="ctl">
+          <div class="tog">
+            <div class="btn primary" id="btnStep">Step</div>
+            <div class="btn" id="btnBack">Back</div>
+            <div class="btn" id="btnReset">Reset</div>
+            <div class="btn" id="btnAuto">Autoplay</div>
+          </div>
+          <div class="note">Two-sided requires posted RECV. One-sided requires MR + rkey, not CPU on the receiver.</div>
+        </div>
+
+        <div class="ctl">
+          <div class="note">Disclaimer: conceptual model; real providers may differ.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script src="shared.js"></script>
+<script>
+/**
+ * State machine: 3 steps; model vars: stepIndex, recvPosted, signalEvery, autoplay; render updates: flows, counters, status text.
+ */
+(() => {
+  const el = {
+    recvYes: document.getElementById('recvYes'),
+    recvNo: document.getElementById('recvNo'),
+    recvVal: document.getElementById('recvVal'),
+    sigRatio: document.getElementById('sigRatio'),
+    sigVal: document.getElementById('sigVal'),
+    stepName: document.getElementById('stepName'),
+    stepNote: document.getElementById('stepNote'),
+    stepCount: document.getElementById('stepCount'),
+    posted: document.getElementById('posted'),
+    cqes: document.getElementById('cqes'),
+    cpuEst: document.getElementById('cpuEst'),
+    cpuTwo: document.getElementById('cpuTwo'),
+    cpuOne: document.getElementById('cpuOne'),
+    statusTwo: document.getElementById('statusTwo'),
+    statusOne: document.getElementById('statusOne'),
+    flowTwo: document.getElementById('flowTwo'),
+    flowOne: document.getElementById('flowOne'),
+    btnStep: document.getElementById('btnStep'),
+    btnBack: document.getElementById('btnBack'),
+    btnReset: document.getElementById('btnReset'),
+    btnAuto: document.getElementById('btnAuto'),
+  };
+
+  const steps = [
+    {name: 'Post WRs', note: 'Sender posts SEND or RDMA_WRITE/READ.'},
+    {name: 'Work executes', note: 'Two-sided waits for RECV; one-sided proceeds if rkey is valid.'},
+    {name: 'Completion', note: 'CQE appears on sender; receiver CQE depends on model.'},
+  ];
+
+  const model = {
+    stepIndex: 0,
+    recvPosted: true,
+    signalEvery: 1,
+    autoplay: false,
+  };
+
+  let timer = null;
+  const renderHud = SimUI.createDebugHud(() => ({
+    stepIndex: model.stepIndex,
+    totalSteps: steps.length,
+    recvPosted: model.recvPosted,
+    signalEvery: model.signalEvery,
+    autoplay: model.autoplay,
+  }));
+
+  function render() {
+    const postedWRs = 32;
+    const cqes = Math.ceil(postedWRs / model.signalEvery);
+    const cpuTwo = model.recvPosted ? 70 : 90;
+    const cpuOne = 20;
+
+    el.sigVal.textContent = `1:${model.signalEvery}`;
+    el.posted.textContent = String(postedWRs);
+    el.cqes.textContent = String(cqes);
+
+    el.recvVal.textContent = model.recvPosted ? 'Yes' : 'No';
+    el.recvYes.classList.toggle('primary', model.recvPosted);
+    el.recvNo.classList.toggle('primary', !model.recvPosted);
+
+    el.stepName.textContent = steps[model.stepIndex].name;
+    el.stepNote.textContent = steps[model.stepIndex].note;
+    el.stepCount.textContent = `Step ${model.stepIndex + 1} / ${steps.length}`;
+
+    el.cpuEst.textContent = model.recvPosted ? '60%' : '85%';
+    el.cpuTwo.classList.toggle('idle', !model.recvPosted);
+    el.cpuTwo.setAttribute('width', String(20 + cpuTwo));
+    el.cpuOne.setAttribute('width', String(20 + cpuOne));
+
+    const stepName = steps[model.stepIndex].name;
+    el.statusTwo.textContent = model.recvPosted ? `RECV posted (${stepName})` : 'RECV missing -> stalls';
+    el.statusOne.textContent = `Receiver passive (${stepName})`;
+
+    const activeFlow = model.stepIndex >= 1;
+    el.flowTwo.classList.toggle('active', activeFlow && model.recvPosted);
+    el.flowOne.classList.toggle('active', activeFlow);
+
+    el.btnAuto.textContent = model.autoplay ? 'Stop' : 'Autoplay';
+    renderHud();
+  }
+
+  function stopAutoplay() {
+    if (timer) clearInterval(timer);
+    timer = null;
+    model.autoplay = false;
+  }
+
+  function stepForward() {
+    if (model.stepIndex < steps.length - 1) {
+      model.stepIndex += 1;
+    } else {
+      stopAutoplay();
+    }
+    render();
+  }
+
+  function stepBack() {
+    model.stepIndex = Math.max(0, model.stepIndex - 1);
+    render();
+  }
+
+  function reset() {
+    model.stepIndex = 0;
+    stopAutoplay();
+    render();
+  }
+
+  function toggleAuto() {
+    if (model.autoplay) {
+      stopAutoplay();
+      render();
+      return;
+    }
+    model.autoplay = true;
+    render();
+    timer = setInterval(() => {
+      if (model.stepIndex >= steps.length - 1) {
+        stopAutoplay();
+        render();
+      } else {
+        model.stepIndex += 1;
+        render();
+      }
+    }, 1200);
+  }
+
+  el.recvYes.onclick = () => { model.recvPosted = true; render(); };
+  el.recvNo.onclick = () => { model.recvPosted = false; render(); };
+  el.sigRatio.addEventListener('input', () => { model.signalEvery = Number(el.sigRatio.value); render(); });
+
+  el.btnStep.onclick = stepForward;
+  el.btnBack.onclick = stepBack;
+  el.btnReset.onclick = reset;
+  el.btnAuto.onclick = toggleAuto;
+
+  render();
+})();
+</script>
+</body>
+</html>

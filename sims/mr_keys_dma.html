@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>MR Registration, Keys, and DMA</title>
+  <link rel="stylesheet" href="shared.css"/>
+  <style>
+    :root{--grid-cols:1fr 360px;--canvas-h:520px;--canvas-h-sm:460px;}
+    svg{width:100%;height:520px;display:block;background:#0a0c0f;border-radius:12px;border:1px solid var(--line2);}
+    .box{fill:#11151b;stroke:#2b3442;stroke-width:1.5;rx:8;}
+    .box.active{stroke:#4da3ff;stroke-width:2;}
+    .box.dim{opacity:0.35;}
+    .label{fill:#e8eef7;font-size:12px;font-family:system-ui,sans-serif;}
+    .muted{fill:#a7b3c5;font-size:11px;font-family:system-ui,sans-serif;}
+    .arrow{stroke:#6ee7b7;stroke-width:2;marker-end:url(#arrow);opacity:0.0;}
+    .arrow.active{opacity:1;}
+    .arrow.fail{stroke:#ff5c5c;opacity:1;}
+    .keyline{stroke:#4da3ff;stroke-width:2;stroke-dasharray:5 4;opacity:0;}
+    .keyline.active{opacity:1;}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>MR Registration, lkey/rkey, and DMA</h1>
+    <p class="sub">Walk through registration, key exchange, and NIC DMA for RDMA READ/WRITE.</p>
+
+    <div class="grid">
+      <div class="card">
+        <div class="stage">
+          <svg viewBox="0 0 720 520" aria-label="MR keys and DMA">
+            <defs>
+              <marker id="arrow" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+                <polygon points="0 0, 10 3.5, 0 7" fill="#6ee7b7"></polygon>
+              </marker>
+            </defs>
+
+            <rect class="box" x="40" y="80" width="280" height="160"></rect>
+            <rect id="a_mr" class="box" x="70" y="120" width="220" height="80"></rect>
+            <text class="label" x="50" y="65">Host A</text>
+            <text class="muted" x="85" y="110">App memory</text>
+            <text class="label" x="90" y="165">MR (lkey)</text>
+            <text class="muted" x="90" y="185">base + len</text>
+
+            <rect class="box" x="400" y="80" width="280" height="160"></rect>
+            <rect id="b_mr" class="box" x="430" y="120" width="220" height="80"></rect>
+            <text class="label" x="410" y="65">Host B</text>
+            <text class="muted" x="445" y="110">App memory</text>
+            <text class="label" x="450" y="165">MR (rkey)</text>
+            <text class="muted" x="450" y="185">base + len</text>
+
+            <line id="keyline" class="keyline" x1="180" y1="210" x2="540" y2="210"></line>
+            <text id="keyLabel" class="muted" x="300" y="200">addr + rkey exchange</text>
+
+            <line id="dma" class="arrow" x1="290" y1="260" x2="430" y2="260"></line>
+            <text id="dmaLabel" class="muted" x="320" y="245">DMA</text>
+
+            <circle id="cqe" cx="360" cy="320" r="10" fill="#6ee7b7" opacity="0"></circle>
+            <text id="cqeLabel" class="muted" x="380" y="325">CQE</text>
+          </svg>
+        </div>
+      </div>
+
+      <div class="card controls">
+        <div class="ctl">
+          <label><span>Operation</span><strong><span id="opVal">RDMA_WRITE</span></strong></label>
+          <div class="tog">
+            <div class="btn primary" id="opWrite">RDMA_WRITE</div>
+            <div class="btn" id="opRead">RDMA_READ</div>
+          </div>
+        </div>
+
+        <div class="ctl">
+          <label><span>Remote access granted (rkey shared)</span><strong><span id="grantVal">Yes</span></strong></label>
+          <div class="tog">
+            <div class="btn primary" id="grantYes">Yes</div>
+            <div class="btn" id="grantNo">No</div>
+          </div>
+        </div>
+
+        <div class="ctl">
+          <label><span>Current step</span><strong><span id="stepName">Register MR</span></strong></label>
+          <div class="note" id="stepNote"></div>
+          <div class="note" id="stepCount"></div>
+        </div>
+
+        <div class="ctl">
+          <div class="tog">
+            <div class="btn primary" id="btnStep">Step</div>
+            <div class="btn" id="btnBack">Back</div>
+            <div class="btn" id="btnReset">Reset</div>
+            <div class="btn" id="btnAuto">Autoplay</div>
+          </div>
+          <div class="note" id="status"></div>
+        </div>
+
+        <div class="ctl">
+          <div class="note">Disclaimer: conceptual model; real providers may differ.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script src="shared.js"></script>
+<script>
+/**
+ * State machine: 5 steps; model vars: stepIndex, op, grant, autoplay; render updates: diagram highlights, status text, counters.
+ */
+(() => {
+  const el = {
+    opVal: document.getElementById('opVal'),
+    opWrite: document.getElementById('opWrite'),
+    opRead: document.getElementById('opRead'),
+    grantVal: document.getElementById('grantVal'),
+    grantYes: document.getElementById('grantYes'),
+    grantNo: document.getElementById('grantNo'),
+    stepName: document.getElementById('stepName'),
+    stepNote: document.getElementById('stepNote'),
+    stepCount: document.getElementById('stepCount'),
+    btnStep: document.getElementById('btnStep'),
+    btnBack: document.getElementById('btnBack'),
+    btnReset: document.getElementById('btnReset'),
+    btnAuto: document.getElementById('btnAuto'),
+    status: document.getElementById('status'),
+    aMr: document.getElementById('a_mr'),
+    bMr: document.getElementById('b_mr'),
+    dma: document.getElementById('dma'),
+    dmaLabel: document.getElementById('dmaLabel'),
+    keyline: document.getElementById('keyline'),
+    keyLabel: document.getElementById('keyLabel'),
+    cqe: document.getElementById('cqe'),
+    cqeLabel: document.getElementById('cqeLabel'),
+  };
+
+  const steps = [
+    {name: 'Register MR', note: 'ibv_reg_mr creates lkey/rkey and pins memory.'},
+    {name: 'Exchange keys', note: 'Out-of-band exchange of addr + rkey.'},
+    {name: 'Post WR', note: 'post_write/post_read uses SGE + remote addr/rkey.'},
+    {name: 'NIC DMA', note: 'NIC performs DMA without CPU copying.'},
+    {name: 'CQE', note: 'Completion indicates success or protection error.'},
+  ];
+
+  const model = {
+    stepIndex: 0,
+    op: 'write',
+    grant: true,
+    autoplay: false,
+  };
+
+  let timer = null;
+  const renderHud = SimUI.createDebugHud(() => ({
+    stepIndex: model.stepIndex,
+    totalSteps: steps.length,
+    op: model.op,
+    grant: model.grant,
+    autoplay: model.autoplay,
+  }));
+
+  function render() {
+    const step = steps[model.stepIndex];
+    el.stepName.textContent = step.name;
+    el.stepNote.textContent = step.note;
+    el.stepCount.textContent = `Step ${model.stepIndex + 1} / ${steps.length}`;
+
+    el.opVal.textContent = model.op === 'write' ? 'RDMA_WRITE' : 'RDMA_READ';
+    el.opWrite.classList.toggle('primary', model.op === 'write');
+    el.opRead.classList.toggle('primary', model.op === 'read');
+    el.grantVal.textContent = model.grant ? 'Yes' : 'No';
+    el.grantYes.classList.toggle('primary', model.grant);
+    el.grantNo.classList.toggle('primary', !model.grant);
+
+    el.aMr.classList.toggle('active', model.stepIndex >= 0);
+    el.bMr.classList.toggle('active', model.stepIndex >= 0);
+
+    el.keyline.classList.toggle('active', model.stepIndex >= 1);
+    el.keyLabel.setAttribute('opacity', model.stepIndex >= 1 ? '1' : '0');
+
+    const canAccess = model.grant && model.stepIndex >= 3;
+    el.dma.classList.toggle('active', model.stepIndex >= 3 && model.grant);
+    el.dma.classList.toggle('fail', model.stepIndex >= 3 && !model.grant);
+    el.dmaLabel.textContent = model.op === 'write' ? 'DMA write' : 'DMA read';
+    el.dmaLabel.setAttribute('opacity', model.stepIndex >= 3 ? '1' : '0');
+
+    el.cqe.setAttribute('opacity', model.stepIndex >= 4 && model.grant ? '1' : '0');
+    el.cqeLabel.setAttribute('opacity', model.stepIndex >= 4 ? '1' : '0');
+
+    if (model.stepIndex < 3) {
+      el.status.textContent = 'Waiting for DMA step...';
+    } else if (!model.grant) {
+      el.status.textContent = 'Protection error: remote access not granted (rkey missing).';
+    } else {
+      el.status.textContent = model.stepIndex >= 4 ? 'DMA completes; CQE reports success.' : 'DMA in flight...';
+    }
+
+    el.btnAuto.textContent = model.autoplay ? 'Stop' : 'Autoplay';
+    renderHud();
+  }
+
+  function stopAutoplay() {
+    if (timer) clearInterval(timer);
+    timer = null;
+    model.autoplay = false;
+  }
+
+  function stepForward() {
+    if (model.stepIndex < steps.length - 1) {
+      model.stepIndex += 1;
+    } else {
+      stopAutoplay();
+    }
+    render();
+  }
+
+  function stepBack() {
+    model.stepIndex = Math.max(0, model.stepIndex - 1);
+    render();
+  }
+
+  function reset() {
+    model.stepIndex = 0;
+    stopAutoplay();
+    render();
+  }
+
+  function toggleAuto() {
+    if (model.autoplay) {
+      stopAutoplay();
+      render();
+      return;
+    }
+    model.autoplay = true;
+    render();
+    timer = setInterval(() => {
+      if (model.stepIndex >= steps.length - 1) {
+        stopAutoplay();
+        render();
+      } else {
+        model.stepIndex += 1;
+        render();
+      }
+    }, 1200);
+  }
+
+  el.opWrite.onclick = () => { model.op = 'write'; render(); };
+  el.opRead.onclick = () => { model.op = 'read'; render(); };
+  el.grantYes.onclick = () => { model.grant = true; render(); };
+  el.grantNo.onclick = () => { model.grant = false; render(); };
+
+  el.btnStep.onclick = stepForward;
+  el.btnBack.onclick = stepBack;
+  el.btnReset.onclick = reset;
+  el.btnAuto.onclick = toggleAuto;
+
+  render();
+})();
+</script>
+</body>
+</html>

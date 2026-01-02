@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Zero-Copy vs Copy Path (TCP vs RDMA)</title>
+  <link rel="stylesheet" href="shared.css"/>
+  <style>
+    :root{
+      --grid-cols:1fr 360px;
+      --canvas-h:520px;
+      --canvas-h-sm:460px;
+    }
+    .legend{display:flex;gap:10px;flex-wrap:wrap;margin-top:6px;font-size:12px;color:var(--muted);}
+    .swatch{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px;}
+    .explain{font-size:12px;color:var(--muted);line-height:1.4;margin-top:8px;}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>TCP Copy Path vs RDMA Zero-Copy</h1>
+    <p class="sub">
+      This sim treats work as abstract units. TCP pays per-byte copy cost plus interrupt overhead.
+      RDMA shifts cost to polling and avoids the copy path.
+    </p>
+
+    <div class="grid">
+      <div class="card">
+        <div class="canvasWrap">
+          <canvas id="c"></canvas>
+        </div>
+      </div>
+
+      <div class="card controls">
+        <div class="ctl">
+          <div class="note">
+            This compares total work for TCP (copy + interrupts) vs RDMA (polling). Increase message size
+            to make copy cost dominate; increase message count to highlight per-message overheads.
+          </div>
+        </div>
+        <div class="ctl">
+          <label><span>Message Size (KB)</span><strong><span id="sizeVal">64</span></strong></label>
+          <input id="msgSize" type="range" min="1" max="1024" step="1" value="64"/>
+        </div>
+
+        <div class="ctl">
+          <label><span>Message Count</span><strong><span id="countVal">200</span></strong></label>
+          <input id="msgCount" type="range" min="10" max="2000" step="10" value="200"/>
+        </div>
+
+        <div class="ctl">
+          <label><span>Copy Cost / Byte</span><strong><span id="copyVal">0.0008</span></strong></label>
+          <input id="copyCost" type="range" min="0.0001" max="0.0020" step="0.0001" value="0.0008"/>
+        </div>
+
+        <div class="ctl">
+          <label><span>Interrupt Cost / Msg</span><strong><span id="intVal">2.0</span></strong></label>
+          <input id="intCost" type="range" min="0.0" max="10.0" step="0.5" value="2.0"/>
+        </div>
+
+        <div class="ctl">
+          <label><span>Poll Cost / Msg</span><strong><span id="pollVal">0.6</span></strong></label>
+          <input id="pollCost" type="range" min="0.0" max="5.0" step="0.1" value="0.6"/>
+        </div>
+
+        <div class="ctl">
+          <div class="kv">
+            <span>TCP total work</span><strong><span id="tcpTotal">0</span></strong>
+            <span>RDMA total work</span><strong><span id="rdmaTotal">0</span></strong>
+            <span>Bytes moved</span><strong><span id="bytesMoved">0</span></strong>
+          </div>
+          <div class="legend">
+            <span><span class="swatch" style="background:#4da3ff"></span>Copy work</span>
+            <span><span class="swatch" style="background:#ffb020"></span>Interrupts</span>
+            <span><span class="swatch" style="background:#6ee7b7"></span>Polling</span>
+          </div>
+          <div class="explain" id="explain"></div>
+        </div>
+
+        <div class="ctl">
+          <label><span>Step</span><strong><span id="stepCount">1 / 4</span></strong></label>
+          <div class="tog">
+            <div class="btn primary" id="btnStep">Step</div>
+            <div class="btn" id="btnBack">Back</div>
+            <div class="btn" id="btnReset">Reset</div>
+            <div class="btn" id="btnAuto">Autoplay</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script src="shared.js"></script>
+<script>
+/**
+ * State machine: 4 steps; model vars: stepIndex, msgSizeKB, msgCount, copyCost, intCost, pollCost, autoplay; render updates: chart, counters, explain text.
+ */
+(() => {
+  const { ctx, canvas } = SimUI.setupCanvas('c');
+
+  const el = {
+    msgSize: document.getElementById('msgSize'),
+    msgCount: document.getElementById('msgCount'),
+    copyCost: document.getElementById('copyCost'),
+    intCost: document.getElementById('intCost'),
+    pollCost: document.getElementById('pollCost'),
+    sizeVal: document.getElementById('sizeVal'),
+    countVal: document.getElementById('countVal'),
+    copyVal: document.getElementById('copyVal'),
+    intVal: document.getElementById('intVal'),
+    pollVal: document.getElementById('pollVal'),
+    tcpTotal: document.getElementById('tcpTotal'),
+    rdmaTotal: document.getElementById('rdmaTotal'),
+    bytesMoved: document.getElementById('bytesMoved'),
+    explain: document.getElementById('explain'),
+    stepCount: document.getElementById('stepCount'),
+    btnStep: document.getElementById('btnStep'),
+    btnBack: document.getElementById('btnBack'),
+    btnReset: document.getElementById('btnReset'),
+    btnAuto: document.getElementById('btnAuto'),
+  };
+
+  const presets = [
+    {msgSizeKB: 64, msgCount: 200, copyCost: 0.0008, intCost: 2.0, pollCost: 0.6},
+    {msgSizeKB: 256, msgCount: 200, copyCost: 0.0010, intCost: 2.0, pollCost: 0.6},
+    {msgSizeKB: 16, msgCount: 1000, copyCost: 0.0006, intCost: 3.0, pollCost: 0.8},
+    {msgSizeKB: 128, msgCount: 800, copyCost: 0.0012, intCost: 1.0, pollCost: 0.4},
+  ];
+
+  const model = {
+    stepIndex: 0,
+    msgSizeKB: presets[0].msgSizeKB,
+    msgCount: presets[0].msgCount,
+    copyCost: presets[0].copyCost,
+    intCost: presets[0].intCost,
+    pollCost: presets[0].pollCost,
+    autoplay: false,
+  };
+
+  let timer = null;
+  const renderHud = SimUI.createDebugHud(() => ({
+    stepIndex: model.stepIndex,
+    totalSteps: presets.length,
+    msgSizeKB: model.msgSizeKB,
+    msgCount: model.msgCount,
+    copyCost: model.copyCost,
+    intCost: model.intCost,
+    pollCost: model.pollCost,
+    autoplay: model.autoplay,
+  }));
+
+  function drawBar(x, y, w, h, parts) {
+    let curY = y + h;
+    for (const part of parts) {
+      const ph = h * (part.value);
+      curY -= ph;
+      ctx.fillStyle = part.color;
+      ctx.fillRect(x, curY, w, ph);
+    }
+    ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+    ctx.strokeRect(x, y, w, h);
+  }
+
+  function drawChart(tcpCopy, tcpInt, rdmaPoll, maxTotal) {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const w = canvas.width;
+    const h = canvas.height;
+    const pad = 40;
+    const chartW = w - pad * 2;
+    const chartH = h - pad * 2;
+    const barW = chartW * 0.25;
+
+    ctx.fillStyle = 'rgba(255,255,255,0.06)';
+    ctx.fillRect(pad, pad, chartW, chartH);
+
+    const tcpTotal = tcpCopy + tcpInt;
+    const rdmaTotal = rdmaPoll;
+    const scale = maxTotal > 0 ? 1 / maxTotal : 0;
+    const tcpParts = [
+      { value: (tcpCopy * scale), color: '#4da3ff' },
+      { value: (tcpInt * scale), color: '#ffb020' },
+    ];
+    const rdmaParts = [{ value: (rdmaPoll * scale), color: '#6ee7b7' }];
+
+    const x1 = pad + chartW * 0.18;
+    const x2 = pad + chartW * 0.58;
+
+    drawBar(x1, pad, barW, chartH, tcpParts);
+    drawBar(x2, pad, barW, chartH, rdmaParts);
+
+    ctx.fillStyle = '#e8eef7';
+    ctx.font = '12px system-ui, sans-serif';
+    ctx.fillText('TCP copy path', x1, pad + chartH + 18);
+    ctx.fillText('RDMA zero-copy', x2, pad + chartH + 18);
+
+    ctx.fillStyle = '#a7b3c5';
+    ctx.fillText(`TCP total: ${tcpTotal.toFixed(0)}`, x1, pad - 10);
+    ctx.fillText(`RDMA total: ${rdmaTotal.toFixed(0)}`, x2, pad - 10);
+  }
+
+  function render() {
+    const msgSize = model.msgSizeKB * 1024;
+    const bytes = msgSize * model.msgCount;
+    const tcpCopy = bytes * model.copyCost * 2;
+    const tcpInt = model.msgCount * model.intCost;
+    const tcpTotal = tcpCopy + tcpInt;
+    const rdmaPoll = model.msgCount * model.pollCost;
+    const rdmaTotal = rdmaPoll;
+
+    el.msgSize.value = String(model.msgSizeKB);
+    el.msgCount.value = String(model.msgCount);
+    el.copyCost.value = String(model.copyCost);
+    el.intCost.value = String(model.intCost);
+    el.pollCost.value = String(model.pollCost);
+
+    el.sizeVal.textContent = String(model.msgSizeKB);
+    el.countVal.textContent = String(model.msgCount);
+    el.copyVal.textContent = model.copyCost.toFixed(4);
+    el.intVal.textContent = model.intCost.toFixed(1);
+    el.pollVal.textContent = model.pollCost.toFixed(1);
+
+    el.tcpTotal.textContent = tcpTotal.toFixed(0);
+    el.rdmaTotal.textContent = rdmaTotal.toFixed(0);
+    el.bytesMoved.textContent = (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+
+    const ratio = tcpTotal > 0 ? (rdmaTotal / tcpTotal) : 0;
+    el.explain.textContent = ratio < 1
+      ? `RDMA shifts work away from per-byte copies. Here it is ~${(ratio * 100).toFixed(0)}% of the TCP work.`
+      : 'At these settings, per-message overhead dominates. Reduce polling cost or increase size to see zero-copy benefits.';
+
+    el.stepCount.textContent = `${model.stepIndex + 1} / ${presets.length}`;
+    el.btnAuto.textContent = model.autoplay ? 'Stop' : 'Autoplay';
+    drawChart(tcpCopy, tcpInt, rdmaPoll, Math.max(tcpTotal, rdmaTotal));
+    renderHud();
+  }
+
+  function stopAutoplay() {
+    if (timer) clearInterval(timer);
+    timer = null;
+    model.autoplay = false;
+  }
+
+  function applyPreset(idx) {
+    const p = presets[idx];
+    model.msgSizeKB = p.msgSizeKB;
+    model.msgCount = p.msgCount;
+    model.copyCost = p.copyCost;
+    model.intCost = p.intCost;
+    model.pollCost = p.pollCost;
+  }
+
+  function stepForward() {
+    if (model.stepIndex < presets.length - 1) {
+      model.stepIndex += 1;
+      applyPreset(model.stepIndex);
+    } else {
+      stopAutoplay();
+    }
+    render();
+  }
+
+  function stepBack() {
+    model.stepIndex = Math.max(0, model.stepIndex - 1);
+    applyPreset(model.stepIndex);
+    render();
+  }
+
+  function reset() {
+    model.stepIndex = 0;
+    applyPreset(0);
+    stopAutoplay();
+    render();
+  }
+
+  function toggleAuto() {
+    if (model.autoplay) {
+      stopAutoplay();
+      render();
+      return;
+    }
+    model.autoplay = true;
+    render();
+    timer = setInterval(() => {
+      if (model.stepIndex >= presets.length - 1) {
+        stopAutoplay();
+        render();
+      } else {
+        model.stepIndex += 1;
+        applyPreset(model.stepIndex);
+        render();
+      }
+    }, 1200);
+  }
+
+  el.msgSize.addEventListener('input', () => { model.msgSizeKB = Number(el.msgSize.value); render(); });
+  el.msgCount.addEventListener('input', () => { model.msgCount = Number(el.msgCount.value); render(); });
+  el.copyCost.addEventListener('input', () => { model.copyCost = Number(el.copyCost.value); render(); });
+  el.intCost.addEventListener('input', () => { model.intCost = Number(el.intCost.value); render(); });
+  el.pollCost.addEventListener('input', () => { model.pollCost = Number(el.pollCost.value); render(); });
+
+  el.btnStep.onclick = stepForward;
+  el.btnBack.onclick = stepBack;
+  el.btnReset.onclick = reset;
+  el.btnAuto.onclick = toggleAuto;
+
+  render();
+})();
+</script>
+</body>
+</html>

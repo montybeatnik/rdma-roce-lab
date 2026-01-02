@@ -49,6 +49,18 @@ See `MECHANICS.md` for the mechanics-focused sequence:
    - Try: Fan-in with rails to show separation.
    - Try: Inc-AST to show staggered heat.
 
+10) `incast_elephant_flows.html` — incast bursts vs elephant flow pressure.
+   - Try: Incast, senders 16, arrival 1.3, drain 0.85, tightness 0.12.
+   - Try: Staggered, elephant share 40% to show sustained queue pressure.
+
+11) `nccl_ring_rail_alignment.html` — NCCL ring ordering vs rail crossings.
+   - Try: Rail aligned with 16 GPUs (cross-rail drops).
+   - Try: Worst case and note cross-rail hops = spine traversals.
+
+12) `topology_tradeoffs_fat_tree.html` — why pick leaf-spine vs fat-tree vs rails.
+   - Try: All-to-all and shuffle to compare hottest links.
+   - Try: Fan-in + oversub 3:1 to show fragility.
+
 ## Notes
 
 - Sims are deterministic enough for screen recording, but small random elements keep them alive.

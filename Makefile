@@ -159,6 +159,10 @@ lab-capture-live:
 lab-deploy:
 	bash scripts/guide/01_multipass_setup.sh
 
+# ---- Containerlab EVPN (FRR) ----
+clab-evpn-deploy:
+	bash scripts/guide/07_multipass_containerlab_frr.sh
+
 # To test 1G transfer
 # make lab-clean
 # CPUS=4 MEM=8G DISK=40G bash scripts/guide/01_multipass_setup.sh
@@ -185,4 +189,4 @@ py-minimal-client:
 
 .PHONY: tests test minimal minimal_server minimal_client rdma_bulk_server rdma_bulk_client tcp_server tcp_client \
 	perf-compare lab-capture lab-capture-live lab-capture-manual lab-capture-live-manual lab-deploy lab-clean \
-	py-list-devices py-query-ports py-minimal-server py-minimal-client py-tests
+	py-list-devices py-query-ports py-minimal-server py-minimal-client py-tests clab-evpn-deploy

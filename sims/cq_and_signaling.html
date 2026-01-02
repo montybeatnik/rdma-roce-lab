@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>CQ Depth and Signaling</title>
+  <link rel="stylesheet" href="shared.css"/>
+  <style>
+    :root{--grid-cols:1fr 360px;--canvas-h:520px;--canvas-h-sm:460px;}
+    .note{margin-top:6px;}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>CQ Depth and Signaled WRs</h1>
+    <p class="sub">See how signaling rate and poll rate affect CQ fill and overflow risk.</p>
+
+    <div class="grid">
+      <div class="card">
+        <div class="canvasWrap">
+          <canvas id="c"></canvas>
+        </div>
+      </div>
+
+      <div class="card controls">
+        <div class="ctl">
+          <label><span>Send rate (WRs/sec)</span><strong><span id="sendVal">4000</span></strong></label>
+          <input id="sendRate" type="range" min="200" max="12000" step="200" value="4000"/>
+        </div>
+
+        <div class="ctl">
+          <label><span>Poll rate (CQEs/sec)</span><strong><span id="pollVal">2500</span></strong></label>
+          <input id="pollRate" type="range" min="200" max="12000" step="200" value="2500"/>
+        </div>
+
+        <div class="ctl">
+          <label><span>Signal every N</span><strong><span id="sigVal">4</span></strong></label>
+          <input id="signalEvery" type="range" min="1" max="16" step="1" value="4"/>
+        </div>
+
+        <div class="ctl">
+          <label><span>CQ depth</span><strong><span id="depthVal">256</span></strong></label>
+          <input id="cqDepth" type="range" min="32" max="1024" step="32" value="256"/>
+        </div>
+
+        <div class="ctl">
+          <label><span>Current step</span><strong><span id="stepVal">0</span></strong></label>
+          <div class="kv">
+            <span>CQ fill</span><strong><span id="fill">0</span></strong>
+            <span>Overflow</span><strong><span id="overflow">No</span></strong>
+          </div>
+          <div class="note" id="status"></div>
+        </div>
+
+        <div class="ctl">
+          <div class="tog">
+            <div class="btn primary" id="btnStep">Step</div>
+            <div class="btn" id="btnBack">Back</div>
+            <div class="btn" id="btnReset">Reset</div>
+            <div class="btn" id="btnAuto">Autoplay</div>
+          </div>
+          <div class="note">Unsignaled WRs reduce CQE pressure, but you still need periodic signals to catch errors.</div>
+        </div>
+
+        <div class="ctl">
+          <div class="note">Disclaimer: conceptual model; real providers may differ.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script src="shared.js"></script>
+<script>
+/**
+ * State machine: unbounded steps; model vars: stepIndex, fill, sendRate, pollRate, signalEvery, cqDepth, autoplay; render updates: ring, counters, status.
+ */
+(() => {
+  const { ctx, canvas } = SimUI.setupCanvas('c');
+
+  const el = {
+    sendRate: document.getElementById('sendRate'),
+    pollRate: document.getElementById('pollRate'),
+    signalEvery: document.getElementById('signalEvery'),
+    cqDepth: document.getElementById('cqDepth'),
+    sendVal: document.getElementById('sendVal'),
+    pollVal: document.getElementById('pollVal'),
+    sigVal: document.getElementById('sigVal'),
+    depthVal: document.getElementById('depthVal'),
+    stepVal: document.getElementById('stepVal'),
+    fill: document.getElementById('fill'),
+    overflow: document.getElementById('overflow'),
+    status: document.getElementById('status'),
+    btnStep: document.getElementById('btnStep'),
+    btnBack: document.getElementById('btnBack'),
+    btnReset: document.getElementById('btnReset'),
+    btnAuto: document.getElementById('btnAuto'),
+  };
+
+  const model = {
+    stepIndex: 0,
+    fill: 0,
+    history: [],
+    sendRate: Number(el.sendRate.value),
+    pollRate: Number(el.pollRate.value),
+    signalEvery: Number(el.signalEvery.value),
+    cqDepth: Number(el.cqDepth.value),
+    autoplay: false,
+  };
+
+  let timer = null;
+  const renderHud = SimUI.createDebugHud(() => ({
+    stepIndex: model.stepIndex,
+    fill: Number(model.fill.toFixed(2)),
+    sendRate: model.sendRate,
+    pollRate: model.pollRate,
+    signalEvery: model.signalEvery,
+    cqDepth: model.cqDepth,
+    autoplay: model.autoplay,
+  }));
+
+  function drawRing(depth, used) {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const w = canvas.width;
+    const h = canvas.height;
+    const r = Math.min(w, h) * 0.3;
+    const cx = w / 2;
+    const cy = h / 2;
+
+    ctx.fillStyle = 'rgba(255,255,255,0.06)';
+    ctx.fillRect(30, 30, w - 60, h - 60);
+
+    ctx.beginPath();
+    ctx.strokeStyle = '#2b3442';
+    ctx.lineWidth = 14;
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.stroke();
+
+    const frac = depth > 0 ? used / depth : 0;
+    ctx.beginPath();
+    ctx.strokeStyle = frac > 0.9 ? '#ff5c5c' : '#4da3ff';
+    ctx.lineWidth = 14;
+    ctx.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * frac);
+    ctx.stroke();
+
+    ctx.fillStyle = '#e8eef7';
+    ctx.font = '14px system-ui, sans-serif';
+    ctx.fillText(`CQ fill ${used.toFixed(1)}/${depth}`, cx - 60, cy + 5);
+  }
+
+  function render() {
+    el.sendVal.textContent = String(model.sendRate);
+    el.pollVal.textContent = String(model.pollRate);
+    el.sigVal.textContent = String(model.signalEvery);
+    el.depthVal.textContent = String(model.cqDepth);
+
+    const overflow = model.fill > model.cqDepth;
+    el.stepVal.textContent = String(model.stepIndex);
+    el.fill.textContent = String(model.fill.toFixed(1));
+    el.overflow.textContent = overflow ? 'Yes' : 'No';
+    el.status.textContent = overflow
+      ? 'CQ overflow risk: completions may be lost or the QP may error.'
+      : 'CQ is within depth. Polling keeps up with signaled WRs.';
+
+    drawRing(model.cqDepth, Math.min(model.fill, model.cqDepth));
+    el.btnAuto.textContent = model.autoplay ? 'Stop' : 'Autoplay';
+    renderHud();
+  }
+
+  function step(dir) {
+    const dt = 0.1;
+    const produced = (model.sendRate * dt) / Math.max(model.signalEvery, 1);
+    const consumed = model.pollRate * dt;
+
+    if (dir > 0) {
+      model.history.push({stepIndex: model.stepIndex, fill: model.fill});
+      model.stepIndex += 1;
+      model.fill = Math.max(0, model.fill + produced - consumed);
+    } else if (dir < 0 && model.history.length > 0) {
+      const prev = model.history.pop();
+      model.stepIndex = prev.stepIndex;
+      model.fill = prev.fill;
+    }
+    render();
+  }
+
+  function stopAutoplay() {
+    if (timer) clearInterval(timer);
+    timer = null;
+    model.autoplay = false;
+  }
+
+  function reset() {
+    model.stepIndex = 0;
+    model.fill = 0;
+    model.history = [];
+    stopAutoplay();
+    render();
+  }
+
+  function toggleAuto() {
+    if (model.autoplay) {
+      stopAutoplay();
+      render();
+      return;
+    }
+    model.autoplay = true;
+    render();
+    timer = setInterval(() => step(1), 800);
+  }
+
+  el.btnStep.onclick = () => step(1);
+  el.btnBack.onclick = () => step(-1);
+  el.btnReset.onclick = reset;
+  el.btnAuto.onclick = toggleAuto;
+
+  ['input', 'change'].forEach(evt => {
+    el.sendRate.addEventListener(evt, () => { model.sendRate = Number(el.sendRate.value); reset(); });
+    el.pollRate.addEventListener(evt, () => { model.pollRate = Number(el.pollRate.value); reset(); });
+    el.signalEvery.addEventListener(evt, () => { model.signalEvery = Number(el.signalEvery.value); reset(); });
+    el.cqDepth.addEventListener(evt, () => { model.cqDepth = Number(el.cqDepth.value); reset(); });
+  });
+
+  render();
+})();
+</script>
+</body>
+</html>

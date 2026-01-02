@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>CQ Polling vs Event-Driven Completions</title>
+  <link rel="stylesheet" href="shared.css"/>
+  <style>
+    :root{
+      --grid-cols:1fr 360px;
+      --canvas-h:520px;
+      --canvas-h-sm:460px;
+    }
+    .legend{display:flex;gap:10px;flex-wrap:wrap;margin-top:6px;font-size:12px;color:var(--muted);}
+    .swatch{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px;}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Polling vs Events: CQ Consumption Tradeoff</h1>
+    <p class="sub">
+      Polling burns steady CPU to reduce latency. Event-driven mode saves CPU but pays wakeup cost and batching delay.
+    </p>
+
+    <div class="grid">
+      <div class="card">
+        <div class="canvasWrap">
+          <canvas id="c"></canvas>
+        </div>
+      </div>
+
+      <div class="card controls">
+        <div class="ctl">
+          <div class="note">
+            Polling trades steady CPU burn for lower latency. Events trade CPU for wakeups and batching delay.
+            Raise poll rate to lower latency; raise batch size to reduce wakeups at the cost of delay.
+          </div>
+        </div>
+        <div class="ctl">
+          <label><span>Poll Rate (polls/sec)</span><strong><span id="pollVal">4000</span></strong></label>
+          <input id="pollRate" type="range" min="200" max="12000" step="200" value="4000"/>
+        </div>
+
+        <div class="ctl">
+          <label><span>Completion Rate (completions/sec)</span><strong><span id="compVal">1200</span></strong></label>
+          <input id="compRate" type="range" min="100" max="6000" step="100" value="1200"/>
+        </div>
+
+        <div class="ctl">
+          <label><span>Batch Size</span><strong><span id="batchVal">8</span></strong></label>
+          <input id="batchSize" type="range" min="1" max="64" step="1" value="8"/>
+        </div>
+
+        <div class="ctl">
+          <label><span>Wakeup Cost (units)</span><strong><span id="wakeVal">14</span></strong></label>
+          <input id="wakeupCost" type="range" min="1" max="40" step="1" value="14"/>
+        </div>
+
+        <div class="ctl">
+          <div class="kv">
+            <span>Polling latency (ms)</span><strong><span id="pollLat">0</span></strong>
+            <span>Events latency (ms)</span><strong><span id="evtLat">0</span></strong>
+            <span>Polling CPU burn</span><strong><span id="pollCpu">0</span></strong>
+            <span>Events CPU burn</span><strong><span id="evtCpu">0</span></strong>
+          </div>
+          <div class="legend">
+            <span><span class="swatch" style="background:#4da3ff"></span>Latency</span>
+            <span><span class="swatch" style="background:#ffb020"></span>CPU burn</span>
+          </div>
+        </div>
+
+        <div class="ctl">
+          <label><span>Step</span><strong><span id="stepCount">1 / 4</span></strong></label>
+          <div class="tog">
+            <div class="btn primary" id="btnStep">Step</div>
+            <div class="btn" id="btnBack">Back</div>
+            <div class="btn" id="btnReset">Reset</div>
+            <div class="btn" id="btnAuto">Autoplay</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script src="shared.js"></script>
+<script>
+/**
+ * State machine: 4 steps; model vars: stepIndex, pollRate, compRate, batchSize, wakeupCost, autoplay; render updates: chart, counters, text.
+ */
+(() => {
+  const { ctx, canvas } = SimUI.setupCanvas('c');
+
+  const el = {
+    pollRate: document.getElementById('pollRate'),
+    compRate: document.getElementById('compRate'),
+    batchSize: document.getElementById('batchSize'),
+    wakeupCost: document.getElementById('wakeupCost'),
+    pollVal: document.getElementById('pollVal'),
+    compVal: document.getElementById('compVal'),
+    batchVal: document.getElementById('batchVal'),
+    wakeVal: document.getElementById('wakeVal'),
+    pollLat: document.getElementById('pollLat'),
+    evtLat: document.getElementById('evtLat'),
+    pollCpu: document.getElementById('pollCpu'),
+    evtCpu: document.getElementById('evtCpu'),
+    stepCount: document.getElementById('stepCount'),
+    btnStep: document.getElementById('btnStep'),
+    btnBack: document.getElementById('btnBack'),
+    btnReset: document.getElementById('btnReset'),
+    btnAuto: document.getElementById('btnAuto'),
+  };
+
+  const presets = [
+    {pollRate: 4000, compRate: 1200, batchSize: 8, wakeupCost: 14},
+    {pollRate: 8000, compRate: 1200, batchSize: 8, wakeupCost: 14},
+    {pollRate: 2000, compRate: 1200, batchSize: 16, wakeupCost: 14},
+    {pollRate: 4000, compRate: 2400, batchSize: 8, wakeupCost: 8},
+  ];
+
+  const model = {
+    stepIndex: 0,
+    pollRate: presets[0].pollRate,
+    compRate: presets[0].compRate,
+    batchSize: presets[0].batchSize,
+    wakeupCost: presets[0].wakeupCost,
+    autoplay: false,
+  };
+
+  let timer = null;
+  const renderHud = SimUI.createDebugHud(() => ({
+    stepIndex: model.stepIndex,
+    totalSteps: presets.length,
+    pollRate: model.pollRate,
+    compRate: model.compRate,
+    batchSize: model.batchSize,
+    wakeupCost: model.wakeupCost,
+    autoplay: model.autoplay,
+  }));
+
+  function drawChart(pollLat, evtLat, pollCpu, evtCpu) {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const w = canvas.width;
+    const h = canvas.height;
+    const pad = 40;
+    const chartW = w - pad * 2;
+    const chartH = h - pad * 2;
+
+    ctx.fillStyle = 'rgba(255,255,255,0.06)';
+    ctx.fillRect(pad, pad, chartW, chartH);
+
+    const maxLat = Math.max(pollLat, evtLat, 1);
+    const maxCpu = Math.max(pollCpu, evtCpu, 1);
+
+    const barW = chartW * 0.22;
+    const x1 = pad + chartW * 0.2;
+    const x2 = pad + chartW * 0.6;
+
+    const halfH = chartH * 0.45;
+    const baseY = pad + halfH;
+
+    ctx.fillStyle = '#4da3ff';
+    ctx.fillRect(x1, baseY - halfH * (pollLat / maxLat), barW, halfH * (pollLat / maxLat));
+    ctx.fillRect(x2, baseY - halfH * (evtLat / maxLat), barW, halfH * (evtLat / maxLat));
+
+    ctx.fillStyle = '#a7b3c5';
+    ctx.font = '12px system-ui, sans-serif';
+    ctx.fillText('Latency', pad, pad + 12);
+
+    const cpuTop = pad + halfH + 40;
+    const cpuH = chartH - (halfH + 40);
+
+    ctx.fillStyle = '#ffb020';
+    ctx.fillRect(x1, cpuTop + cpuH - cpuH * (pollCpu / maxCpu), barW, cpuH * (pollCpu / maxCpu));
+    ctx.fillRect(x2, cpuTop + cpuH - cpuH * (evtCpu / maxCpu), barW, cpuH * (evtCpu / maxCpu));
+
+    ctx.fillStyle = '#a7b3c5';
+    ctx.fillText('CPU burn', pad, cpuTop + 12);
+
+    ctx.fillStyle = '#e8eef7';
+    ctx.fillText('Polling', x1, pad + chartH + 18);
+    ctx.fillText('Events', x2, pad + chartH + 18);
+  }
+
+  function render() {
+    const pollLatencyMs = model.pollRate > 0 ? (1000 / model.pollRate) : 0;
+    const batchDelayMs = model.compRate > 0 ? (1000 * model.batchSize / model.compRate) : 0;
+    const evtLatencyMs = batchDelayMs + (model.wakeupCost * 0.05);
+    const pollCpu = model.pollRate * 1.0;
+    const evtCpu = (model.compRate / Math.max(model.batchSize, 1)) * model.wakeupCost;
+
+    el.pollRate.value = String(model.pollRate);
+    el.compRate.value = String(model.compRate);
+    el.batchSize.value = String(model.batchSize);
+    el.wakeupCost.value = String(model.wakeupCost);
+
+    el.pollVal.textContent = String(model.pollRate);
+    el.compVal.textContent = String(model.compRate);
+    el.batchVal.textContent = String(model.batchSize);
+    el.wakeVal.textContent = String(model.wakeupCost);
+
+    el.pollLat.textContent = pollLatencyMs.toFixed(2);
+    el.evtLat.textContent = evtLatencyMs.toFixed(2);
+    el.pollCpu.textContent = pollCpu.toFixed(0);
+    el.evtCpu.textContent = evtCpu.toFixed(0);
+
+    el.stepCount.textContent = `${model.stepIndex + 1} / ${presets.length}`;
+    el.btnAuto.textContent = model.autoplay ? 'Stop' : 'Autoplay';
+    drawChart(pollLatencyMs, evtLatencyMs, pollCpu, evtCpu);
+    renderHud();
+  }
+
+  function stopAutoplay() {
+    if (timer) clearInterval(timer);
+    timer = null;
+    model.autoplay = false;
+  }
+
+  function applyPreset(idx) {
+    const p = presets[idx];
+    model.pollRate = p.pollRate;
+    model.compRate = p.compRate;
+    model.batchSize = p.batchSize;
+    model.wakeupCost = p.wakeupCost;
+  }
+
+  function stepForward() {
+    if (model.stepIndex < presets.length - 1) {
+      model.stepIndex += 1;
+      applyPreset(model.stepIndex);
+    } else {
+      stopAutoplay();
+    }
+    render();
+  }
+
+  function stepBack() {
+    model.stepIndex = Math.max(0, model.stepIndex - 1);
+    applyPreset(model.stepIndex);
+    render();
+  }
+
+  function reset() {
+    model.stepIndex = 0;
+    applyPreset(0);
+    stopAutoplay();
+    render();
+  }
+
+  function toggleAuto() {
+    if (model.autoplay) {
+      stopAutoplay();
+      render();
+      return;
+    }
+    model.autoplay = true;
+    render();
+    timer = setInterval(() => {
+      if (model.stepIndex >= presets.length - 1) {
+        stopAutoplay();
+        render();
+      } else {
+        model.stepIndex += 1;
+        applyPreset(model.stepIndex);
+        render();
+      }
+    }, 1200);
+  }
+
+  el.pollRate.addEventListener('input', () => { model.pollRate = Number(el.pollRate.value); render(); });
+  el.compRate.addEventListener('input', () => { model.compRate = Number(el.compRate.value); render(); });
+  el.batchSize.addEventListener('input', () => { model.batchSize = Number(el.batchSize.value); render(); });
+  el.wakeupCost.addEventListener('input', () => { model.wakeupCost = Number(el.wakeupCost.value); render(); });
+
+  el.btnStep.onclick = stepForward;
+  el.btnBack.onclick = stepBack;
+  el.btnReset.onclick = reset;
+  el.btnAuto.onclick = toggleAuto;
+
+  render();
+})();
+</script>
+</body>
+</html>

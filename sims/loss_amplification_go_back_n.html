@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Loss Amplification: Go-Back-N vs Selective</title>
+  <link rel="stylesheet" href="shared.css"/>
+  <style>
+    :root{
+      --grid-cols:1fr 360px;
+      --canvas-h:520px;
+      --canvas-h-sm:460px;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Loss Amplification: Go-Back-N vs Selective</h1>
+    <p class="sub">
+      A small drop in a deep pipeline can trigger a larger resend burst. This sim compares coarse recovery
+      (go-back-n style) to selective retransmit.
+    </p>
+
+    <div class="grid">
+      <div class="card">
+        <div class="canvasWrap">
+          <canvas id="c"></canvas>
+        </div>
+      </div>
+
+      <div class="card controls">
+        <div class="ctl">
+          <div class="note">
+            Losses in a deep pipeline can trigger extra resends. Coarse recovery resends a window; selective
+            resends only the missing packets. Increase inflight depth to amplify the gap.
+          </div>
+        </div>
+        <div class="ctl">
+          <label><span>Loss Rate</span><strong><span id="lossVal">0.01</span></strong></label>
+          <input id="lossRate" type="range" min="0.00" max="0.10" step="0.005" value="0.01"/>
+        </div>
+
+        <div class="ctl">
+          <label><span>Burst Loss (extra packets)</span><strong><span id="burstVal">2</span></strong></label>
+          <input id="burstLoss" type="range" min="0" max="6" step="1" value="2"/>
+        </div>
+
+        <div class="ctl">
+          <label><span>Inflight Depth</span><strong><span id="inflightVal">16</span></strong></label>
+          <input id="inflight" type="range" min="4" max="64" step="1" value="16"/>
+        </div>
+
+        <div class="ctl">
+          <label><span>Recovery Mode</span><strong><span id="modeVal">Coarse</span></strong></label>
+          <div class="tog">
+            <div class="btn primary" id="modeCoarse">Coarse (go-back-n)</div>
+            <div class="btn" id="modeSelective">Selective</div>
+          </div>
+        </div>
+
+        <div class="ctl">
+          <div class="kv">
+            <span>Bytes resent</span><strong><span id="resent">0</span></strong>
+            <span>Amplification factor</span><strong><span id="amp">0.0x</span></strong>
+            <span>GPU idle proxy</span><strong><span id="idle">0%</span></strong>
+          </div>
+        </div>
+
+        <div class="ctl">
+          <label><span>Step</span><strong><span id="stepCount">1 / 4</span></strong></label>
+          <div class="tog">
+            <div class="btn primary" id="btnStep">Step</div>
+            <div class="btn" id="btnBack">Back</div>
+            <div class="btn" id="btnReset">Reset</div>
+            <div class="btn" id="btnAuto">Autoplay</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script src="shared.js"></script>
+<script>
+/**
+ * State machine: 4 steps; model vars: stepIndex, lossRate, burstLoss, inflight, mode, autoplay; render updates: chart, counters, mode label.
+ */
+(() => {
+  const { ctx, canvas } = SimUI.setupCanvas('c');
+
+  const el = {
+    lossRate: document.getElementById('lossRate'),
+    burstLoss: document.getElementById('burstLoss'),
+    inflight: document.getElementById('inflight'),
+    lossVal: document.getElementById('lossVal'),
+    burstVal: document.getElementById('burstVal'),
+    inflightVal: document.getElementById('inflightVal'),
+    modeVal: document.getElementById('modeVal'),
+    modeCoarse: document.getElementById('modeCoarse'),
+    modeSelective: document.getElementById('modeSelective'),
+    resent: document.getElementById('resent'),
+    amp: document.getElementById('amp'),
+    idle: document.getElementById('idle'),
+    stepCount: document.getElementById('stepCount'),
+    btnStep: document.getElementById('btnStep'),
+    btnBack: document.getElementById('btnBack'),
+    btnReset: document.getElementById('btnReset'),
+    btnAuto: document.getElementById('btnAuto'),
+  };
+
+  const presets = [
+    {lossRate: 0.01, burstLoss: 2, inflight: 16, mode: 'coarse'},
+    {lossRate: 0.01, burstLoss: 2, inflight: 16, mode: 'selective'},
+    {lossRate: 0.03, burstLoss: 4, inflight: 24, mode: 'coarse'},
+    {lossRate: 0.02, burstLoss: 1, inflight: 32, mode: 'selective'},
+  ];
+
+  const model = {
+    stepIndex: 0,
+    lossRate: presets[0].lossRate,
+    burstLoss: presets[0].burstLoss,
+    inflight: presets[0].inflight,
+    mode: presets[0].mode,
+    autoplay: false,
+  };
+
+  let timer = null;
+  const renderHud = SimUI.createDebugHud(() => ({
+    stepIndex: model.stepIndex,
+    totalSteps: presets.length,
+    lossRate: model.lossRate,
+    burstLoss: model.burstLoss,
+    inflight: model.inflight,
+    mode: model.mode,
+    autoplay: model.autoplay,
+  }));
+
+  function rng(seed) {
+    let t = seed >>> 0;
+    return () => {
+      t += 0x6D2B79F5;
+      let r = Math.imul(t ^ (t >>> 15), 1 | t);
+      r ^= r + Math.imul(r ^ (r >>> 7), 61 | r);
+      return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  function simulate() {
+    const packets = 400;
+    let resent = 0;
+    let burstRemaining = 0;
+    let stalls = 0;
+    const resentSeries = [];
+
+    const seed = Math.floor(model.lossRate * 1e6) + model.burstLoss * 1000 + model.inflight * 10 + (model.mode === 'coarse' ? 1 : 2);
+    const rand = rng(seed);
+
+    for (let i = 0; i < packets; i++) {
+      let lost = false;
+      if (burstRemaining > 0) {
+        lost = true;
+        burstRemaining -= 1;
+      } else if (rand() < model.lossRate) {
+        lost = true;
+        burstRemaining = model.burstLoss;
+      }
+
+      if (lost) {
+        const resend = model.mode === 'coarse' ? Math.min(model.inflight, packets - i) : 1;
+        resent += resend;
+        stalls += Math.max(1, model.inflight / 4);
+      }
+
+      resentSeries.push(resent);
+    }
+
+    const total = packets + resent;
+    const amplification = total / packets;
+    const idle = Math.min(100, (stalls / packets) * 100);
+
+    return { resent, amplification, idle, resentSeries };
+  }
+
+  function drawChart(series) {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const w = canvas.width;
+    const h = canvas.height;
+    const pad = 40;
+    const chartW = w - pad * 2;
+    const chartH = h - pad * 2;
+
+    ctx.fillStyle = 'rgba(255,255,255,0.06)';
+    ctx.fillRect(pad, pad, chartW, chartH);
+
+    const maxVal = Math.max(series[series.length - 1], 1);
+    ctx.strokeStyle = '#ff5c5c';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    series.forEach((v, i) => {
+      const x = pad + (i / (series.length - 1)) * chartW;
+      const y = pad + chartH - (v / maxVal) * chartH;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+
+    ctx.fillStyle = '#a7b3c5';
+    ctx.font = '12px system-ui, sans-serif';
+    ctx.fillText('Cumulative bytes resent', pad, pad - 10);
+  }
+
+  function applyPreset(idx) {
+    const p = presets[idx];
+    model.lossRate = p.lossRate;
+    model.burstLoss = p.burstLoss;
+    model.inflight = p.inflight;
+    model.mode = p.mode;
+  }
+
+  function render() {
+    const result = simulate();
+    el.resent.textContent = result.resent.toFixed(0);
+    el.amp.textContent = result.amplification.toFixed(2) + 'x';
+    el.idle.textContent = result.idle.toFixed(0) + '%';
+    drawChart(result.resentSeries);
+
+    el.lossRate.value = String(model.lossRate);
+    el.burstLoss.value = String(model.burstLoss);
+    el.inflight.value = String(model.inflight);
+    el.lossVal.textContent = model.lossRate.toFixed(3);
+    el.burstVal.textContent = String(model.burstLoss);
+    el.inflightVal.textContent = String(model.inflight);
+
+    el.modeVal.textContent = model.mode === 'coarse' ? 'Coarse' : 'Selective';
+    el.modeCoarse.classList.toggle('primary', model.mode === 'coarse');
+    el.modeSelective.classList.toggle('primary', model.mode === 'selective');
+
+    el.stepCount.textContent = `${model.stepIndex + 1} / ${presets.length}`;
+    el.btnAuto.textContent = model.autoplay ? 'Stop' : 'Autoplay';
+    renderHud();
+  }
+
+  function stopAutoplay() {
+    if (timer) clearInterval(timer);
+    timer = null;
+    model.autoplay = false;
+  }
+
+  function stepForward() {
+    if (model.stepIndex < presets.length - 1) {
+      model.stepIndex += 1;
+      applyPreset(model.stepIndex);
+    } else {
+      stopAutoplay();
+    }
+    render();
+  }
+
+  function stepBack() {
+    model.stepIndex = Math.max(0, model.stepIndex - 1);
+    applyPreset(model.stepIndex);
+    render();
+  }
+
+  function reset() {
+    model.stepIndex = 0;
+    applyPreset(0);
+    stopAutoplay();
+    render();
+  }
+
+  function toggleAuto() {
+    if (model.autoplay) {
+      stopAutoplay();
+      render();
+      return;
+    }
+    model.autoplay = true;
+    render();
+    timer = setInterval(() => {
+      if (model.stepIndex >= presets.length - 1) {
+        stopAutoplay();
+        render();
+      } else {
+        model.stepIndex += 1;
+        applyPreset(model.stepIndex);
+        render();
+      }
+    }, 1200);
+  }
+
+  el.modeCoarse.onclick = () => { model.mode = 'coarse'; render(); };
+  el.modeSelective.onclick = () => { model.mode = 'selective'; render(); };
+  el.lossRate.addEventListener('input', () => { model.lossRate = Number(el.lossRate.value); render(); });
+  el.burstLoss.addEventListener('input', () => { model.burstLoss = Number(el.burstLoss.value); render(); });
+  el.inflight.addEventListener('input', () => { model.inflight = Number(el.inflight.value); render(); });
+
+  el.btnStep.onclick = stepForward;
+  el.btnBack.onclick = stepBack;
+  el.btnReset.onclick = reset;
+  el.btnAuto.onclick = toggleAuto;
+
+  render();
+})();
+</script>
+</body>
+</html>

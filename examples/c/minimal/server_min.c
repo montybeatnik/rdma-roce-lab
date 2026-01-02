@@ -3,6 +3,7 @@
  */
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -17,11 +18,16 @@
 int main(int argc, char **argv)
 {
     const char *port = (argc >= 2) ? argv[1] : "7471";
+    const char *bind_ip = getenv("RDMA_BIND_IP");
 
     rdma_ctx c = {0};
     LOGF("SLOW", "create CM channel + listen");
     cm_create_channel_and_id(&c);
-    cm_server_listen(&c, NULL, port);
+    if (bind_ip && *bind_ip)
+    {
+        LOGF("SLOW", "  bind_ip=%s", bind_ip);
+    }
+    cm_server_listen(&c, bind_ip, port);
 
     struct rdma_cm_event *ev;
     LOGF("SLOW", "wait CONNECT_REQUEST");

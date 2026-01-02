@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>NCCL Ring vs Rail Alignment</title>
+  <link rel="stylesheet" href="shared.css"/>
+  <style>
+    :root{
+      --wrap-max:1200px;
+      --grid-cols:1fr 360px;
+      --canvas-h:580px;
+      --canvas-h-sm:520px;
+    }
+    @media (max-width: 1020px){
+      .grid{grid-template-columns:1fr;}
+      canvas{height:520px;}
+    }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h1>NCCL Ring vs Rail Alignment</h1>
+  <p class="sub">
+    NCCL ring neighbors become simultaneous send/recv pairs. If the ring alternates rails,
+    every hop crosses the spine. Rail-aligned ordering keeps most hops on the same rail.
+  </p>
+
+  <div class="grid">
+    <div class="card">
+      <div class="canvasWrap"><canvas id="c"></canvas></div>
+    </div>
+
+    <div class="card controls">
+      <div class="ctl">
+        <label><span>Ring Order</span><span class="pill" id="orderLabel">Rail Aligned</span></label>
+        <div class="tog">
+          <div class="btn primary" id="orderAligned">Rail Aligned</div>
+          <div class="btn" id="orderRandom">Random</div>
+          <div class="btn" id="orderWorst">Worst Case</div>
+        </div>
+        <div class="note">
+          Worst case alternates rails every hop. Random shows the typical mix.
+        </div>
+      </div>
+
+      <div class="ctl">
+        <label><span>Total GPUs</span><strong><span id="gpusVal">16</span></strong></label>
+        <input id="gpus" type="range" min="8" max="32" step="2" value="16"/>
+        <div class="note">Assumes 4 GPUs per host, 2 per rail.</div>
+      </div>
+
+      <div class="ctl">
+        <label><span>Rail Balance</span><strong><span id="balanceVal">50%</span></strong></label>
+        <input id="balance" type="range" min="30" max="70" step="5" value="50"/>
+        <div class="note">Skews how many GPUs are on Rail A vs Rail B.</div>
+      </div>
+
+      <div class="ctl">
+        <div class="tog">
+          <div class="btn" id="reshuffle">Reshuffle Ring</div>
+          <div class="btn primary" id="toggleRun">Pause</div>
+        </div>
+        <div class="kv">
+          <span>Cross-rail hops</span><strong><span id="crossVal">0</span></strong>
+          <span>Cross-rail %</span><strong><span id="crossPct">0%</span></strong>
+          <span>Spine traversals</span><strong><span id="spineVal">0</span></strong>
+        </div>
+        <div class="note">
+          Each cross-rail hop implies a spine traversal (higher contention).
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="shared.js"></script>
+<script>
+(() => {
+  const { canvas, ctx } = SimUI.setupCanvas('c');
+
+  const el = {
+    orderLabel: document.getElementById('orderLabel'),
+    orderAligned: document.getElementById('orderAligned'),
+    orderRandom: document.getElementById('orderRandom'),
+    orderWorst: document.getElementById('orderWorst'),
+    gpus: document.getElementById('gpus'),
+    gpusVal: document.getElementById('gpusVal'),
+    balance: document.getElementById('balance'),
+    balanceVal: document.getElementById('balanceVal'),
+    reshuffle: document.getElementById('reshuffle'),
+    toggleRun: document.getElementById('toggleRun'),
+    crossVal: document.getElementById('crossVal'),
+    crossPct: document.getElementById('crossPct'),
+    spineVal: document.getElementById('spineVal')
+  };
+
+  const bindRange = SimUI.bindRange;
+  bindRange(el.gpus, el.gpusVal, v => String(v));
+  bindRange(el.balance, el.balanceVal, v => `${v}%`);
+
+  let orderMode = 'aligned';
+  let running = true;
+  let ring = [];
+  let rails = [];
+  let t = 0;
+
+  function setOrder(mode){
+    orderMode = mode;
+    el.orderLabel.textContent = mode === 'aligned' ? 'Rail Aligned' : mode === 'random' ? 'Random' : 'Worst Case';
+    el.orderAligned.classList.toggle('primary', mode === 'aligned');
+    el.orderRandom.classList.toggle('primary', mode === 'random');
+    el.orderWorst.classList.toggle('primary', mode === 'worst');
+    buildRing();
+  }
+
+  el.orderAligned.onclick = () => setOrder('aligned');
+  el.orderRandom.onclick = () => setOrder('random');
+  el.orderWorst.onclick = () => setOrder('worst');
+
+  el.toggleRun.onclick = () => {
+    running = !running;
+    el.toggleRun.textContent = running ? 'Pause' : 'Play';
+  };
+
+  el.reshuffle.onclick = () => buildRing();
+
+  function shuffle(arr){
+    for(let i=arr.length-1;i>0;i--){
+      const j = Math.floor(Math.random()*(i+1));
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    return arr;
+  }
+
+  function buildRails(){
+    const n = Number(el.gpus.value);
+    const balance = Number(el.balance.value) / 100;
+    const aCount = Math.round(n * balance);
+    rails = [];
+    for(let i=0;i<n;i++){
+      rails.push(i < aCount ? 'A' : 'B');
+    }
+    shuffle(rails);
+  }
+
+  function buildRing(){
+    const n = Number(el.gpus.value);
+    buildRails();
+    ring = Array.from({length:n}, (_,i)=>i);
+
+    if(orderMode === 'aligned'){
+      const a = ring.filter(i => rails[i] === 'A');
+      const b = ring.filter(i => rails[i] === 'B');
+      ring = a.concat(b);
+    } else if(orderMode === 'random'){
+      shuffle(ring);
+    } else {
+      const a = ring.filter(i => rails[i] === 'A');
+      const b = ring.filter(i => rails[i] === 'B');
+      ring = [];
+      const maxLen = Math.max(a.length, b.length);
+      for(let i=0;i<maxLen;i++){
+        if(a[i] !== undefined) ring.push(a[i]);
+        if(b[i] !== undefined) ring.push(b[i]);
+      }
+    }
+  }
+
+  function layout(){
+    const w = canvas.getBoundingClientRect().width;
+    const h = canvas.getBoundingClientRect().height;
+    const cx = w / 2;
+    const cy = h / 2;
+    const r = Math.min(w,h) * 0.32;
+    return { w,h,cx,cy,r };
+  }
+
+  function draw(){
+    const { w,h,cx,cy,r } = layout();
+    ctx.clearRect(0,0,w,h);
+    ctx.fillStyle = '#0a0c0f';
+    ctx.fillRect(0,0,w,h);
+
+    const n = ring.length;
+    const nodes = ring.map((id, idx) => {
+      const ang = (idx / n) * Math.PI * 2 - Math.PI / 2;
+      return {
+        id,
+        x: cx + Math.cos(ang) * r,
+        y: cy + Math.sin(ang) * r,
+        rail: rails[id]
+      };
+    });
+
+    // Draw links
+    let cross = 0;
+    for(let i=0;i<n;i++){
+      const a = nodes[i];
+      const b = nodes[(i+1)%n];
+      const crossRail = a.rail !== b.rail;
+      if(crossRail) cross++;
+      ctx.strokeStyle = crossRail ? 'rgba(168,85,247,0.85)' : 'rgba(56,189,248,0.6)';
+      ctx.lineWidth = crossRail ? 2.5 : 1.6;
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.stroke();
+    }
+
+    // Draw nodes
+    for(const node of nodes){
+      ctx.fillStyle = node.rail === 'A' ? 'rgba(56,189,248,0.95)' : 'rgba(59,130,246,0.95)';
+      ctx.beginPath();
+      ctx.arc(node.x, node.y, 6, 0, Math.PI*2);
+      ctx.fill();
+    }
+
+    // Ring rotation animation
+    if(running){
+      t += 0.005;
+    }
+    const glow = 0.35 + Math.sin(t * 4) * 0.15;
+    ctx.strokeStyle = `rgba(255,255,255,${glow})`;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r + 18, 0, Math.PI * 2);
+    ctx.stroke();
+
+    el.crossVal.textContent = String(cross);
+    el.crossPct.textContent = `${Math.round((cross / n) * 100)}%`;
+    el.spineVal.textContent = String(cross);
+  }
+
+  function step(){
+    draw();
+    requestAnimationFrame(step);
+  }
+
+  el.gpus.addEventListener('input', buildRing);
+  el.balance.addEventListener('input', buildRing);
+
+  buildRing();
+  step();
+})();
+</script>
+</body>
+</html>

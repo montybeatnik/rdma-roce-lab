@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>QP State Machine Walkthrough</title>
+  <link rel="stylesheet" href="shared.css"/>
+  <style>
+    :root{--grid-cols:1fr 360px;--canvas-h:520px;--canvas-h-sm:460px;}
+    .stage{padding:12px;}
+    .note{margin-top:6px;}
+    .legend{display:flex;gap:10px;flex-wrap:wrap;margin-top:6px;font-size:12px;color:var(--muted);}
+    .swatch{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px;}
+    svg{width:100%;height:520px;display:block;background:#0a0c0f;border-radius:12px;border:1px solid var(--line2);}
+    .node{fill:#11151b;stroke:#2b3442;stroke-width:2;}
+    .node.active{stroke:#4da3ff;stroke-width:3;}
+    .node.done{stroke:#6ee7b7;stroke-width:3;}
+    .edge{stroke:#2b3442;stroke-width:2;marker-end:url(#arrow);}
+    .edge.active{stroke:#4da3ff;}
+    .edge.error{stroke:#ff5c5c;}
+    .label{fill:#e8eef7;font-size:12px;font-family:system-ui,sans-serif;}
+    .hint{fill:#a7b3c5;font-size:11px;font-family:system-ui,sans-serif;}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>QP State Machine (Conceptual)</h1>
+    <p class="sub">Step through the RESET -> INIT -> RTR -> RTS path and see which attributes matter at each transition.</p>
+
+    <div class="grid">
+      <div class="card">
+        <div class="stage">
+          <svg viewBox="0 0 720 520" aria-label="QP state machine">
+            <defs>
+              <marker id="arrow" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+                <polygon points="0 0, 10 3.5, 0 7" fill="#2b3442"></polygon>
+              </marker>
+            </defs>
+            <line id="e_reset_init" class="edge" x1="120" y1="140" x2="300" y2="140"></line>
+            <line id="e_init_rtr" class="edge" x1="420" y1="140" x2="600" y2="140"></line>
+            <line id="e_rtr_rts" class="edge" x1="600" y1="180" x2="600" y2="320"></line>
+            <line id="e_any_err" class="edge" x1="520" y1="360" x2="280" y2="360"></line>
+
+            <rect id="n_reset" class="node" x="60" y="110" width="120" height="60" rx="10"></rect>
+            <rect id="n_init" class="node" x="300" y="110" width="120" height="60" rx="10"></rect>
+            <rect id="n_rtr" class="node" x="540" y="110" width="120" height="60" rx="10"></rect>
+            <rect id="n_rts" class="node" x="540" y="320" width="120" height="60" rx="10"></rect>
+            <rect id="n_err" class="node" x="280" y="330" width="160" height="60" rx="10"></rect>
+
+            <text class="label" x="90" y="145">RESET</text>
+            <text class="label" x="335" y="145">INIT</text>
+            <text class="label" x="575" y="145">RTR</text>
+            <text class="label" x="575" y="355">RTS</text>
+            <text class="label" x="330" y="365">ERROR</text>
+
+            <text class="hint" x="70" y="95">create_qp</text>
+            <text class="hint" x="280" y="95">modify_qp INIT</text>
+            <text class="hint" x="520" y="95">modify_qp RTR</text>
+            <text class="hint" x="620" y="300">modify_qp RTS</text>
+            <text class="hint" x="300" y="420">error path</text>
+          </svg>
+        </div>
+      </div>
+
+      <div class="card controls">
+        <div class="ctl">
+          <label><span>Step</span><strong><span id="stepName">RESET</span></strong></label>
+          <div class="note" id="stepNote"></div>
+          <div class="note" id="stepCount"></div>
+        </div>
+
+        <div class="ctl">
+          <label><span>Key attributes</span><span class="pill">per transition</span></label>
+          <div class="note" id="attrs"></div>
+        </div>
+
+        <div class="ctl">
+          <label><span>What happens</span><span class="pill">at this step</span></label>
+          <div class="note" id="happens"></div>
+        </div>
+
+        <div class="ctl">
+          <label><span>Controls</span></label>
+          <div class="tog">
+            <div class="btn primary" id="btnStep">Step</div>
+            <div class="btn" id="btnBack">Back</div>
+            <div class="btn" id="btnReset">Reset</div>
+            <div class="btn" id="btnAuto">Autoplay</div>
+          </div>
+          <div class="note" id="errNote"></div>
+        </div>
+
+        <div class="ctl">
+          <div class="note">Disclaimer: conceptual model; real providers may differ.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script src="shared.js"></script>
+<script>
+/**
+ * State machine: 5 steps; model vars: stepIndex, autoplay; render updates: node/edge highlights, step text, attrs, counter.
+ */
+(() => {
+  const steps = [
+    {
+      name: 'RESET',
+      to: 'reset',
+      note: 'QP exists but has no routing or access parameters set.',
+      attrs: ['create_qp -> RESET'],
+      happens: [
+        'Queue pair is allocated; queues exist but are not usable.',
+        'No addressing, MTU, or access permissions are configured yet.'
+      ],
+      edge: null,
+    },
+    {
+      name: 'INIT',
+      to: 'init',
+      note: 'Local access permissions and port are defined.',
+      attrs: ['pkey_index', 'port_num', 'qp_access_flags'],
+      happens: [
+        'Local HCA port is bound; access flags are validated.',
+        'No remote addressing yet, so send/recv is still blocked.'
+      ],
+      edge: 'e_reset_init',
+    },
+    {
+      name: 'RTR',
+      to: 'rtr',
+      note: 'Receiver is ready; remote addressing and path parameters are set.',
+      attrs: ['dest_qp_num', 'path_mtu', 'rq_psn', 'ah_attr', 'max_dest_rd_atomic', 'min_rnr_timer'],
+      happens: [
+        'Remote QP number and path (LID/GID, SL, MTU) are set.',
+        'Receive side can accept packets; sender is not active yet.'
+      ],
+      edge: 'e_init_rtr',
+    },
+    {
+      name: 'RTS',
+      to: 'rts',
+      note: 'Sender is ready; retry and send parameters are set.',
+      attrs: ['sq_psn', 'timeout', 'retry_cnt', 'rnr_retry', 'max_rd_atomic'],
+      happens: [
+        'Send PSN and retry behavior are armed.',
+        'RDMA READ/WRITE and SEND work end-to-end.'
+      ],
+      edge: 'e_rtr_rts',
+    },
+    {
+      name: 'ERROR',
+      to: 'err',
+      note: 'Failures push the QP into ERROR; completions will show failure status.',
+      attrs: ['bad MTU', 'wrong GID/LID', 'wrong PSN', 'wrong access flags'],
+      happens: [
+        'Work requests fail; CQEs report error status.',
+        'Recovery usually requires transitioning back to RESET.'
+      ],
+      edge: 'e_any_err',
+    }
+  ];
+
+  const nodes = {
+    reset: document.getElementById('n_reset'),
+    init: document.getElementById('n_init'),
+    rtr: document.getElementById('n_rtr'),
+    rts: document.getElementById('n_rts'),
+    err: document.getElementById('n_err'),
+  };
+  const edges = {
+    e_reset_init: document.getElementById('e_reset_init'),
+    e_init_rtr: document.getElementById('e_init_rtr'),
+    e_rtr_rts: document.getElementById('e_rtr_rts'),
+    e_any_err: document.getElementById('e_any_err'),
+  };
+
+  const el = {
+    stepName: document.getElementById('stepName'),
+    stepNote: document.getElementById('stepNote'),
+    stepCount: document.getElementById('stepCount'),
+    attrs: document.getElementById('attrs'),
+    happens: document.getElementById('happens'),
+    errNote: document.getElementById('errNote'),
+    btnStep: document.getElementById('btnStep'),
+    btnBack: document.getElementById('btnBack'),
+    btnReset: document.getElementById('btnReset'),
+    btnAuto: document.getElementById('btnAuto'),
+  };
+
+  const model = {
+    stepIndex: 0,
+    autoplay: false,
+  };
+
+  let timer = null;
+  const renderHud = SimUI.createDebugHud(() => ({
+    stepIndex: model.stepIndex,
+    totalSteps: steps.length,
+    autoplay: model.autoplay,
+  }));
+
+  function render() {
+    const step = steps[model.stepIndex];
+    Object.values(nodes).forEach(n => n.classList.remove('active', 'done'));
+    Object.values(edges).forEach(e => e.classList.remove('active', 'error'));
+
+    steps.forEach((s, i) => {
+      if (i < model.stepIndex && nodes[s.to]) nodes[s.to].classList.add('done');
+    });
+    nodes[step.to].classList.add('active');
+    if (step.edge && edges[step.edge]) {
+      edges[step.edge].classList.add(step.name === 'ERROR' ? 'error' : 'active');
+    }
+
+    el.stepName.textContent = step.name;
+    el.stepNote.textContent = step.note;
+    el.stepCount.textContent = `Step ${model.stepIndex + 1} / ${steps.length}`;
+    el.attrs.textContent = step.attrs.join(', ');
+    el.happens.innerHTML = step.happens.map(item => `- ${item}`).join('<br/>');
+
+    el.errNote.textContent = step.name === 'ERROR'
+      ? 'Common causes: bad MTU, wrong GID/LID, wrong PSN, wrong access flags.'
+      : '';
+
+    el.btnAuto.textContent = model.autoplay ? 'Stop' : 'Autoplay';
+    renderHud();
+  }
+
+  function stopAutoplay() {
+    if (timer) clearInterval(timer);
+    timer = null;
+    model.autoplay = false;
+  }
+
+  function stepForward() {
+    if (model.stepIndex < steps.length - 1) {
+      model.stepIndex += 1;
+    } else {
+      stopAutoplay();
+    }
+    render();
+  }
+
+  function stepBack() {
+    model.stepIndex = Math.max(0, model.stepIndex - 1);
+    render();
+  }
+
+  function reset() {
+    model.stepIndex = 0;
+    stopAutoplay();
+    render();
+  }
+
+  function toggleAuto() {
+    if (model.autoplay) {
+      stopAutoplay();
+      render();
+      return;
+    }
+    model.autoplay = true;
+    render();
+    timer = setInterval(() => {
+      if (model.stepIndex >= steps.length - 1) {
+        stopAutoplay();
+        render();
+      } else {
+        model.stepIndex += 1;
+        render();
+      }
+    }, 1200);
+  }
+
+  el.btnStep.onclick = stepForward;
+  el.btnBack.onclick = stepBack;
+  el.btnReset.onclick = reset;
+  el.btnAuto.onclick = toggleAuto;
+
+  render();
+})();
+</script>
+</body>
+</html>

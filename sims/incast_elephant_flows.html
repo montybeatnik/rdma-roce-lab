@@ -1,0 +1,378 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Incast and Elephant Flow Simulation</title>
+  <link rel="stylesheet" href="shared.css"/>
+  <style>
+    :root{
+      --wrap-max:1200px;
+      --grid-cols:1fr 360px;
+      --canvas-h:580px;
+      --canvas-h-sm:520px;
+    }
+    @media (max-width: 1020px){
+      .grid{grid-template-columns:1fr;}
+      canvas{height:520px;}
+    }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Incast vs Elephant Flows: Queue Shock</h1>
+  <p class="sub">
+    Incast aligns many senders into one queue while elephant flows keep sustained pressure on the fabric.
+    Toggle modes to show short-lived bursts vs long-lived hitters and why small queues melt.
+  </p>
+
+  <div class="grid">
+    <div class="card">
+      <div class="canvasWrap"><canvas id="c"></canvas></div>
+    </div>
+
+    <div class="card controls">
+      <div class="ctl">
+        <label><span>Mode</span><span class="pill" id="modeLabel">Incast Burst</span></label>
+        <div class="tog">
+          <div class="btn primary" id="modeIncast">Incast Burst</div>
+          <div class="btn" id="modeStagger">Staggered</div>
+        </div>
+        <div class="note">
+          Incast aligns senders into tight windows, creating sudden queue spikes.
+        </div>
+      </div>
+
+      <div class="ctl">
+        <label><span>Senders</span><strong><span id="sendersVal">12</span></strong></label>
+        <input id="senders" type="range" min="4" max="20" step="1" value="12"/>
+      </div>
+
+      <div class="ctl">
+        <label><span>Elephant Share</span><strong><span id="eleVal">25%</span></strong></label>
+        <input id="elephant" type="range" min="0" max="60" step="5" value="25"/>
+        <div class="note">Elephants are long-lived, high-rate flows.</div>
+      </div>
+
+      <div class="ctl">
+        <label><span>Arrival Rate</span><strong><span id="rateVal">1.15</span></strong></label>
+        <input id="arrivalRate" type="range" min="0.40" max="2.00" step="0.05" value="1.15"/>
+      </div>
+
+      <div class="ctl">
+        <label><span>Drain Capacity</span><strong><span id="drainVal">0.85</span></strong></label>
+        <input id="drainRate" type="range" min="0.40" max="1.80" step="0.05" value="0.85"/>
+      </div>
+
+      <div class="ctl">
+        <label><span>Queue Size</span><strong><span id="qmaxVal">120</span></strong></label>
+        <input id="qmax" type="range" min="60" max="220" step="10" value="120"/>
+      </div>
+
+      <div class="ctl">
+        <label><span>Incast Tightness</span><strong><span id="tightVal">0.16</span></strong></label>
+        <input id="tight" type="range" min="0.06" max="0.40" step="0.01" value="0.16"/>
+        <div class="note">Lower = tighter alignment of bursts.</div>
+      </div>
+
+      <div class="ctl">
+        <div class="tog">
+          <div class="btn primary" id="toggleRun">Pause</div>
+          <div class="btn danger" id="reset">Reset</div>
+        </div>
+        <div class="kv">
+          <span>Queue occupancy</span><strong><span id="qOcc">0</span></strong>
+          <span>Queue %</span><strong><span id="qPct">0%</span></strong>
+          <span>Instant arrival</span><strong><span id="arrNow">0.00</span></strong>
+          <span>Instant drain</span><strong><span id="drNow">0.00</span></strong>
+          <span>Drop rate</span><strong><span id="dropNow">0.0%</span></strong>
+        </div>
+        <div class="note">
+          Tip: Use senders 14-18, arrival 1.3, drain 0.85, tightness 0.12 to show classic incast.
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="shared.js"></script>
+<script>
+(() => {
+  const { canvas, ctx } = SimUI.setupCanvas('c');
+
+  const el = {
+    modeLabel: document.getElementById('modeLabel'),
+    modeIncast: document.getElementById('modeIncast'),
+    modeStagger: document.getElementById('modeStagger'),
+    senders: document.getElementById('senders'),
+    sendersVal: document.getElementById('sendersVal'),
+    elephant: document.getElementById('elephant'),
+    eleVal: document.getElementById('eleVal'),
+    arrivalRate: document.getElementById('arrivalRate'),
+    rateVal: document.getElementById('rateVal'),
+    drainRate: document.getElementById('drainRate'),
+    drainVal: document.getElementById('drainVal'),
+    qmax: document.getElementById('qmax'),
+    qmaxVal: document.getElementById('qmaxVal'),
+    tight: document.getElementById('tight'),
+    tightVal: document.getElementById('tightVal'),
+    toggleRun: document.getElementById('toggleRun'),
+    reset: document.getElementById('reset'),
+    qOcc: document.getElementById('qOcc'),
+    qPct: document.getElementById('qPct'),
+    arrNow: document.getElementById('arrNow'),
+    drNow: document.getElementById('drNow'),
+    dropNow: document.getElementById('dropNow')
+  };
+
+  const bindRange = SimUI.bindRange;
+  bindRange(el.senders, el.sendersVal, v => String(v));
+  bindRange(el.elephant, el.eleVal, v => `${v}%`);
+  bindRange(el.arrivalRate, el.rateVal, v => Number(v).toFixed(2));
+  bindRange(el.drainRate, el.drainVal, v => Number(v).toFixed(2));
+  bindRange(el.qmax, el.qmaxVal, v => String(v));
+  bindRange(el.tight, el.tightVal, v => Number(v).toFixed(2));
+
+  let mode = 'incast';
+  let running = true;
+
+  function setMode(next){
+    mode = next;
+    el.modeLabel.textContent = (mode === 'incast') ? 'Incast Burst' : 'Staggered';
+    el.modeIncast.classList.toggle('primary', mode === 'incast');
+    el.modeStagger.classList.toggle('primary', mode === 'stagger');
+  }
+  el.modeIncast.onclick = () => setMode('incast');
+  el.modeStagger.onclick = () => setMode('stagger');
+
+  el.toggleRun.onclick = () => {
+    running = !running;
+    el.toggleRun.textContent = running ? 'Pause' : 'Play';
+  };
+
+  let t = 0;
+  let q = 0;
+  let lastArr = 0;
+  let lastDrain = 0;
+  let lastDrop = 0;
+  let history = [];
+  let particles = [];
+  let senderTypes = [];
+
+  function resetSenders(){
+    const n = Number(el.senders.value);
+    const elephantPct = Number(el.elephant.value) / 100;
+    senderTypes = [];
+    for(let i=0;i<n;i++){
+      senderTypes.push(Math.random() < elephantPct ? 'elephant' : 'mice');
+    }
+  }
+
+  function reset(){
+    t = 0;
+    q = 0;
+    lastArr = 0;
+    lastDrain = 0;
+    lastDrop = 0;
+    history = [];
+    particles = [];
+    resetSenders();
+  }
+  el.reset.onclick = reset;
+
+  el.senders.addEventListener('input', resetSenders);
+  el.elephant.addEventListener('input', resetSenders);
+
+  function clamp(x,a,b){ return Math.max(a, Math.min(b, x)); }
+  function lerp(a,b,p){ return a + (b-a) * p; }
+
+  function layout(){
+    const w = canvas.getBoundingClientRect().width;
+    const h = canvas.getBoundingClientRect().height;
+    const margin = 30;
+    const leftX = margin;
+    const rightX = w - margin;
+    const centerX = w * 0.55;
+    const senderTop = 70;
+    const senderBottom = h * 0.72;
+    const senderH = senderBottom - senderTop;
+    const queueW = 70;
+    const queueH = 160;
+    const queueX = centerX - queueW / 2;
+    const queueY = h * 0.28;
+    return { w,h,leftX,rightX,centerX,senderTop,senderBottom,senderH,queueW,queueH,queueX,queueY };
+  }
+
+  function draw(){
+    const { w,h,leftX,rightX,centerX,senderTop,senderBottom,senderH,queueW,queueH,queueX,queueY } = layout();
+
+    ctx.clearRect(0,0,w,h);
+    ctx.fillStyle = '#0a0c0f';
+    ctx.fillRect(0,0,w,h);
+
+    // Titles
+    ctx.fillStyle = 'rgba(167,179,197,0.9)';
+    ctx.font = '12px system-ui, -apple-system, Segoe UI, Roboto, Arial';
+    ctx.fillText('Senders', leftX, 40);
+    ctx.fillText('Queue', queueX, queueY - 10);
+    ctx.fillText('Receiver', rightX - 60, 40);
+
+    // Senders
+    const n = Number(el.senders.value);
+    const gap = senderH / (n - 1);
+    for(let i=0;i<n;i++){
+      const y = senderTop + i * gap;
+      const isEle = senderTypes[i] === 'elephant';
+      ctx.fillStyle = isEle ? 'rgba(255,176,32,0.9)' : 'rgba(77,163,255,0.9)';
+      ctx.beginPath();
+      ctx.arc(leftX, y, isEle ? 6 : 4, 0, Math.PI*2);
+      ctx.fill();
+
+      ctx.strokeStyle = isEle ? 'rgba(255,176,32,0.3)' : 'rgba(77,163,255,0.2)';
+      ctx.lineWidth = isEle ? 2.2 : 1.2;
+      ctx.beginPath();
+      ctx.moveTo(leftX, y);
+      ctx.lineTo(centerX - 10, queueY + queueH/2);
+      ctx.stroke();
+    }
+
+    // Queue
+    ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(queueX, queueY, queueW, queueH);
+
+    const qmax = Number(el.qmax.value);
+    const fillH = clamp(q / qmax, 0, 1) * queueH;
+    ctx.fillStyle = (q / qmax > 0.85) ? 'rgba(255,92,92,0.85)' : 'rgba(77,163,255,0.8)';
+    ctx.fillRect(queueX, queueY + queueH - fillH, queueW, fillH);
+
+    // Drain line to receiver
+    ctx.strokeStyle = 'rgba(110,231,183,0.35)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(queueX + queueW, queueY + queueH/2);
+    ctx.lineTo(rightX - 20, queueY + queueH/2);
+    ctx.stroke();
+
+    ctx.fillStyle = 'rgba(110,231,183,0.9)';
+    ctx.beginPath();
+    ctx.arc(rightX - 20, queueY + queueH/2, 7, 0, Math.PI*2);
+    ctx.fill();
+
+    // Particles
+    for(const p of particles){
+      const sx = p.fromX;
+      const sy = p.fromY;
+      const ex = p.toX;
+      const ey = p.toY;
+      const x = lerp(sx, ex, p.t);
+      const y = lerp(sy, ey, p.t);
+      ctx.fillStyle = p.color;
+      ctx.beginPath();
+      ctx.arc(x, y, p.r, 0, Math.PI*2);
+      ctx.fill();
+    }
+
+    // History chart
+    const chartW = 190;
+    const chartH = 70;
+    const chartX = w - chartW - 20;
+    const chartY = h - chartH - 20;
+    ctx.fillStyle = 'rgba(17,21,27,0.8)';
+    ctx.fillRect(chartX, chartY, chartW, chartH);
+    ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+    ctx.strokeRect(chartX, chartY, chartW, chartH);
+
+    if(history.length > 1){
+      ctx.strokeStyle = 'rgba(77,163,255,0.8)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      history.forEach((v, idx) => {
+        const x = chartX + (idx / (history.length - 1)) * chartW;
+        const y = chartY + chartH - (v / qmax) * chartH;
+        if(idx === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+    }
+
+    ctx.fillStyle = 'rgba(167,179,197,0.8)';
+    ctx.font = '11px system-ui, -apple-system, Segoe UI, Roboto, Arial';
+    ctx.fillText('Queue history', chartX + 8, chartY + 14);
+  }
+
+  function step(){
+    if(running){
+      const n = Number(el.senders.value);
+      const arrivalRate = Number(el.arrivalRate.value);
+      const drainRate = Number(el.drainRate.value);
+      const tight = Number(el.tight.value);
+      const qmax = Number(el.qmax.value);
+
+      const phase = (t % 1);
+      const windowOpen = mode === 'incast' ? phase < tight : Math.random() < tight;
+
+      let arrival = 0;
+      for(let i=0;i<n;i++){
+        const isEle = senderTypes[i] === 'elephant';
+        let send = 0;
+        if(isEle){
+          send = arrivalRate * 0.18 + Math.random() * arrivalRate * 0.04;
+        }else if(windowOpen){
+          send = arrivalRate * (0.10 + Math.random() * 0.12);
+        }
+        arrival += send;
+
+        if(send > 0.001){
+          const { leftX, centerX, queueY, queueH, senderTop, senderH } = layout();
+          const gap = senderH / (Math.max(1, n-1));
+          const y = senderTop + i * gap;
+          particles.push({
+            fromX: leftX,
+            fromY: y,
+            toX: centerX - 10,
+            toY: queueY + queueH / 2,
+            t: 0,
+            speed: 0.012 + Math.random() * 0.01,
+            color: isEle ? 'rgba(255,176,32,0.75)' : 'rgba(77,163,255,0.6)',
+            r: isEle ? 3.2 : 2.2
+          });
+        }
+      }
+
+      const drain = drainRate;
+      const prevQ = q;
+      q = clamp(q + arrival - drain, 0, qmax);
+      const overflow = Math.max(0, prevQ + arrival - drain - qmax);
+      lastDrop = overflow / Math.max(0.001, arrival);
+
+      lastArr = arrival;
+      lastDrain = drain;
+
+      history.push(q);
+      if(history.length > 160) history.shift();
+
+      t += 0.02;
+    }
+
+    // particles update
+    particles = particles.filter(p => p.t < 1);
+    for(const p of particles){
+      p.t += p.speed;
+    }
+
+    el.qOcc.textContent = q.toFixed(0);
+    el.qPct.textContent = `${Math.round((q / Number(el.qmax.value)) * 100)}%`;
+    el.arrNow.textContent = lastArr.toFixed(2);
+    el.drNow.textContent = lastDrain.toFixed(2);
+    el.dropNow.textContent = `${(lastDrop * 100).toFixed(1)}%`;
+
+    draw();
+    requestAnimationFrame(step);
+  }
+
+  reset();
+  step();
+})();
+</script>
+</body>
+</html>

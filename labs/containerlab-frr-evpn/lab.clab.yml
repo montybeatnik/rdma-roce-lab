@@ -1,0 +1,103 @@
+name: frr-evpn-fabric
+
+mgmt:
+  network: clab
+
+topology:
+  nodes:
+    spine1:
+      kind: linux
+      image: rdma-frr:latest
+      binds:
+        - configs/spine1.conf:/etc/frr/frr.conf
+        - configs/daemons:/etc/frr/daemons
+      exec:
+        - sysctl -w net.ipv4.ip_forward=1
+        - ip link set eth1 up
+        - ip link set eth2 up
+    spine2:
+      kind: linux
+      image: rdma-frr:latest
+      binds:
+        - configs/spine2.conf:/etc/frr/frr.conf
+        - configs/daemons:/etc/frr/daemons
+      exec:
+        - sysctl -w net.ipv4.ip_forward=1
+        - ip link set eth1 up
+        - ip link set eth2 up
+
+    leaf1:
+      kind: linux
+      image: rdma-frr:latest
+      binds:
+        - configs/leaf1.conf:/etc/frr/frr.conf
+        - configs/daemons:/etc/frr/daemons
+      exec:
+        - sysctl -w net.ipv4.ip_forward=1
+        - ip addr add 10.0.0.11/32 dev lo
+        - ip link set eth1 up
+        - ip link set eth2 up
+        - ip link set eth3 up
+        - ip link add br10 type bridge
+        - ip link add vxlan10 type vxlan id 1010 dstport 4789 local 10.0.0.11 nolearning
+        - ip link set vxlan10 master br10
+        - ip link set eth3 master br10
+        - ip link set vxlan10 up
+        - ip link set br10 up
+    leaf2:
+      kind: linux
+      image: rdma-frr:latest
+      binds:
+        - configs/leaf2.conf:/etc/frr/frr.conf
+        - configs/daemons:/etc/frr/daemons
+      exec:
+        - sysctl -w net.ipv4.ip_forward=1
+        - ip addr add 10.0.0.12/32 dev lo
+        - ip link set eth1 up
+        - ip link set eth2 up
+        - ip link set eth3 up
+        - ip link add br10 type bridge
+        - ip link add vxlan10 type vxlan id 1010 dstport 4789 local 10.0.0.12 nolearning
+        - ip link set vxlan10 master br10
+        - ip link set eth3 master br10
+        - ip link set vxlan10 up
+        - ip link set br10 up
+
+    gpu1:
+      kind: linux
+      image: rdma-minimal:latest
+      cap-add:
+        - NET_ADMIN
+        - SYS_ADMIN
+        - SYS_RESOURCE
+        - IPC_LOCK
+      binds:
+        - /sys/class/infiniband:/sys/class/infiniband:ro
+      cmd: "sleep infinity"
+      exec:
+        - ip link set eth1 up
+        - ip addr add 10.10.10.101/24 dev eth1
+    gpu2:
+      kind: linux
+      image: rdma-minimal:latest
+      cap-add:
+        - NET_ADMIN
+        - SYS_ADMIN
+        - SYS_RESOURCE
+        - IPC_LOCK
+      binds:
+        - /sys/class/infiniband:/sys/class/infiniband:ro
+      cmd: "sleep infinity"
+      exec:
+        - ip link set eth1 up
+        - ip addr add 10.10.10.102/24 dev eth1
+
+  links:
+    - endpoints: ["leaf1:eth1", "spine1:eth1"]
+    - endpoints: ["leaf1:eth2", "spine2:eth1"]
+
+    - endpoints: ["leaf2:eth1", "spine1:eth2"]
+    - endpoints: ["leaf2:eth2", "spine2:eth2"]
+
+    - endpoints: ["leaf1:eth3", "gpu1:eth1"]
+    - endpoints: ["leaf2:eth3", "gpu2:eth1"]
