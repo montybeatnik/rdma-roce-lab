@@ -125,7 +125,7 @@ HTML/Canvas sims you can open directly in a browser. Start with the ones below.
 - `sims/topology_overlay.html` — leaf–spine vs rails under overlay pressure.
 - `sims/topology_overlay_rail_aligned.html` — rail-aligned routing intuition.
 
-See [sims/README.md](sims/README.md) for the full list and recording tips.
+See [sims/README.md](sims/README.md) for the full list and mechanics guide.
 
 ## Labs (questions first)
 

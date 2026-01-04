@@ -11,6 +11,8 @@ See `MECHANICS.md` for the mechanics-focused sequence:
 - Two-sided vs one-sided operations
 - CQ depth and signaling
 
+Open: `MECHANICS.md`
+
 ## Learning order (start here)
 
 1) `average_vs_spikes.html` — averages hide microbursts.
