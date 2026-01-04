@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>RDMA Slow/Fast Path Simulation</title>
+  <link rel="stylesheet" href="shared.css" />
+</head>
+<body>
+  <div class="wrap">
+    <h1>RDMA Slow Setup vs Fast Data Path</h1>
+    <p class="sub">
+      The setup path (CM + QP + MR) is expensive, but the data path is fast. This sim shows how reuse
+      amortizes setup cost across many messages.
+    </p>
+
+    <div class="grid">
+      <div class="card">
+        <div class="canvasWrap">
+          <canvas id="c"></canvas>
+        </div>
+      </div>
+
+      <div class="card controls">
+        <div class="ctl">
+          <label><span>Presets</span><span class="pill">Scenes</span></label>
+          <div class="tog">
+            <div class="btn primary" id="pReuse">Reuse On</div>
+            <div class="btn" id="pNoReuse">Reuse Off</div>
+            <div class="btn" id="pTiny">Tiny msgs</div>
+            <div class="btn" id="pHuge">Huge batch</div>
+            <div class="btn danger" id="reset">Reset</div>
+          </div>
+          <div class="note">Break-even appears when setup is large and message count is high.</div>
+        </div>
+
+        <div class="ctl">
+          <label><span>Setup Cost (ms)</span><strong><span id="setupVal">1200</span></strong></label>
+          <input id="setupCost" type="range" min="200" max="3000" step="50" value="1200" />
+        </div>
+
+        <div class="ctl">
+          <label><span>Per-message Cost (ms)</span><strong><span id="perVal">6</span></strong></label>
+          <input id="perCost" type="range" min="1" max="30" step="1" value="6" />
+        </div>
+
+        <div class="ctl">
+          <label><span>Message Count</span><strong><span id="countVal">200</span></strong></label>
+          <input id="msgCount" type="range" min="20" max="600" step="10" value="200" />
+        </div>
+
+        <div class="ctl">
+          <label><span>Reuse Setup</span><span class="pill" id="reuseLabel">Enabled</span></label>
+          <div class="tog">
+            <div class="btn primary" id="reuseOn">Reuse On</div>
+            <div class="btn" id="reuseOff">Reuse Off</div>
+          </div>
+          <div class="note">With reuse, setup happens once. Without reuse, every message pays setup.</div>
+        </div>
+
+        <div class="ctl">
+          <div class="tog">
+            <div class="btn primary" id="toggleRun">Pause</div>
+          </div>
+          <div class="kv">
+            <span>Amortized cost</span><strong><span id="amort">0 ms</span></strong>
+            <span>Total time</span><strong><span id="total">0 ms</span></strong>
+            <span>Setup share</span><strong><span id="share">0%</span></strong>
+          </div>
+          <div class="note">Use this to explain why you want long-lived QPs and registered buffers.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script src="shared.js"></script>
+<script>
+(() => {
+  const { ctx } = SimUI.setupCanvas('c');
+
+  const el = {
+    pReuse: document.getElementById('pReuse'),
+    pNoReuse: document.getElementById('pNoReuse'),
+    pTiny: document.getElementById('pTiny'),
+    pHuge: document.getElementById('pHuge'),
+    reset: document.getElementById('reset'),
+    toggleRun: document.getElementById('toggleRun'),
+
+    setupCost: document.getElementById('setupCost'),
+    perCost: document.getElementById('perCost'),
+    msgCount: document.getElementById('msgCount'),
+
+    setupVal: document.getElementById('setupVal'),
+    perVal: document.getElementById('perVal'),
+    countVal: document.getElementById('countVal'),
+
+    reuseOn: document.getElementById('reuseOn'),
+    reuseOff: document.getElementById('reuseOff'),
+    reuseLabel: document.getElementById('reuseLabel'),
+
+    amort: document.getElementById('amort'),
+    total: document.getElementById('total'),
+    share: document.getElementById('share'),
+  };
+
+  const bindRange = SimUI.bindRange;
+  bindRange(el.setupCost, el.setupVal, v => v);
+  bindRange(el.perCost, el.perVal, v => v);
+  bindRange(el.msgCount, el.countVal, v => v);
+
+  let running = true;
+  let reuse = true;
+  let t = 0;
+
+  function setReuse(on) {
+    reuse = on;
+    el.reuseLabel.textContent = on ? 'Enabled' : 'Disabled';
+    el.reuseOn.classList.toggle('primary', on);
+    el.reuseOff.classList.toggle('primary', !on);
+  }
+
+  el.reuseOn.onclick = () => setReuse(true);
+  el.reuseOff.onclick = () => setReuse(false);
+
+  function applyPreset(p) {
+    el.setupCost.value = p.setup;
+    el.perCost.value = p.per;
+    el.msgCount.value = p.count;
+    el.setupCost.dispatchEvent(new Event('input'));
+    el.perCost.dispatchEvent(new Event('input'));
+    el.msgCount.dispatchEvent(new Event('input'));
+    setReuse(p.reuse);
+    t = 0;
+  }
+
+  el.pReuse.onclick = () => applyPreset({ setup:1200, per:6, count:200, reuse:true });
+  el.pNoReuse.onclick = () => applyPreset({ setup:1200, per:6, count:200, reuse:false });
+  el.pTiny.onclick = () => applyPreset({ setup:800, per:2, count:80, reuse:true });
+  el.pHuge.onclick = () => applyPreset({ setup:1400, per:4, count:500, reuse:true });
+  el.reset.onclick = () => applyPreset({ setup:1200, per:6, count:200, reuse:true });
+
+  el.toggleRun.onclick = () => {
+    running = !running;
+    el.toggleRun.textContent = running ? 'Pause' : 'Play';
+  };
+
+  function tick() {
+    if (running) t += 0.016;
+
+    const setup = Number(el.setupCost.value);
+    const per = Number(el.perCost.value);
+    const count = Number(el.msgCount.value);
+
+    const total = reuse ? setup + per * count : (setup + per) * count;
+    const amort = total / count;
+    const setupShare = reuse ? (setup / total) : (setup * count) / total;
+
+    el.amort.textContent = `${amort.toFixed(1)} ms/msg`;
+    el.total.textContent = `${total.toFixed(0)} ms`;
+    el.share.textContent = `${(setupShare * 100).toFixed(0)}%`;
+
+    const w = ctx.canvas.width / (window.devicePixelRatio || 1);
+    const h = ctx.canvas.height / (window.devicePixelRatio || 1);
+    ctx.clearRect(0, 0, w, h);
+
+    ctx.fillStyle = '#0d1117';
+    ctx.fillRect(0, 0, w, h);
+
+    const pad = 50;
+    const chartW = w - pad * 2;
+    const chartH = h - pad * 2;
+
+    ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+    ctx.beginPath();
+    ctx.moveTo(pad, pad);
+    ctx.lineTo(pad, h - pad);
+    ctx.lineTo(w - pad, h - pad);
+    ctx.stroke();
+
+    const maxTime = Math.max(setup + per * count, (setup + per) * count) * 1.05;
+
+    function plotLine(color, useReuse) {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      for (let i = 1; i <= count; i++) {
+        const tVal = useReuse ? setup + per * i : (setup + per) * i;
+        const x = pad + (i / count) * chartW;
+        const y = h - pad - (tVal / maxTime) * chartH;
+        if (i === 1) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+    }
+
+    plotLine('#4da3ff', true);
+    plotLine('#ffb020', false);
+
+    const idx = Math.floor(((t * 40) % count) + 1);
+    const useReuse = reuse;
+    const tVal = useReuse ? setup + per * idx : (setup + per) * idx;
+    const x = pad + (idx / count) * chartW;
+    const y = h - pad - (tVal / maxTime) * chartH;
+
+    ctx.fillStyle = useReuse ? '#4da3ff' : '#ffb020';
+    ctx.beginPath();
+    ctx.arc(x, y, 5, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = '#e8eef7';
+    ctx.font = '12px system-ui, sans-serif';
+    ctx.fillText('Reuse (setup once)', pad + 6, pad + 14);
+    ctx.fillStyle = '#4da3ff';
+    ctx.fillRect(pad - 2, pad + 6, 8, 8);
+
+    ctx.fillStyle = '#e8eef7';
+    ctx.fillText('No reuse (setup per msg)', pad + 170, pad + 14);
+    ctx.fillStyle = '#ffb020';
+    ctx.fillRect(pad + 156, pad + 6, 8, 8);
+
+    ctx.fillStyle = '#a7b3c5';
+    ctx.fillText(`Msg ${idx} of ${count}`, pad, h - pad + 28);
+
+    requestAnimationFrame(tick);
+  }
+
+  applyPreset({ setup:1200, per:6, count:200, reuse:true });
+  requestAnimationFrame(tick);
+})();
+</script>
+</body>
+</html>

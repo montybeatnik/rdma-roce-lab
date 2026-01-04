@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Zero-Copy vs Copy Path Simulation</title>
+  <link rel="stylesheet" href="shared.css" />
+</head>
+<body>
+  <div class="wrap">
+    <h1>Zero-Copy vs Copy Path</h1>
+    <p class="sub">
+      Compare a TCP-style copy path (kernel copies + interrupts) against RDMA zero-copy (DMA + polling).
+      The bars show per-message cost composition and the totals scale with message count.
+    </p>
+
+    <div class="grid">
+      <div class="card">
+        <div class="canvasWrap">
+          <canvas id="c"></canvas>
+        </div>
+      </div>
+
+      <div class="card controls">
+        <div class="ctl">
+          <label><span>Presets</span><span class="pill">Scenes</span></label>
+          <div class="tog">
+            <div class="btn primary" id="pSmall">Small msgs</div>
+            <div class="btn" id="pMedium">Balanced</div>
+            <div class="btn" id="pBig">Big msgs</div>
+            <div class="btn" id="pCopyHeavy">Copy-heavy</div>
+            <div class="btn danger" id="reset">Reset</div>
+          </div>
+          <div class="note">Use <strong>Big msgs</strong> to highlight zero-copy wins.</div>
+        </div>
+
+        <div class="ctl">
+          <label><span>Message Size (KB)</span><strong><span id="sizeVal">64</span></strong></label>
+          <input id="msgSize" type="range" min="4" max="512" step="4" value="64" />
+        </div>
+
+        <div class="ctl">
+          <label><span>Message Count</span><strong><span id="countVal">400</span></strong></label>
+          <input id="msgCount" type="range" min="50" max="1000" step="10" value="400" />
+        </div>
+
+        <div class="ctl">
+          <label><span>Copy Cost (ms per KB)</span><strong><span id="copyVal">0.0010</span></strong></label>
+          <input id="copyCost" type="range" min="0.0002" max="0.0030" step="0.0001" value="0.0010" />
+        </div>
+
+        <div class="ctl">
+          <label><span>DMA Cost (ms per KB)</span><strong><span id="dmaVal">0.0002</span></strong></label>
+          <input id="dmaCost" type="range" min="0.0001" max="0.0010" step="0.0001" value="0.0002" />
+        </div>
+
+        <div class="ctl">
+          <label><span>Interrupt Cost (ms per msg)</span><strong><span id="intrVal">2.0</span></strong></label>
+          <input id="intrCost" type="range" min="0.2" max="6.0" step="0.1" value="2.0" />
+        </div>
+
+        <div class="ctl">
+          <label><span>Poll Cost (ms per msg)</span><strong><span id="pollVal">0.6</span></strong></label>
+          <input id="pollCost" type="range" min="0.1" max="3.0" step="0.1" value="0.6" />
+        </div>
+
+        <div class="ctl">
+          <label><span>RDMA Setup (ms)</span><strong><span id="setupVal">1200</span></strong></label>
+          <input id="setupCost" type="range" min="100" max="3000" step="50" value="1200" />
+          <div class="note">Models connection + MR registration amortized once.</div>
+        </div>
+
+        <div class="ctl">
+          <div class="tog">
+            <div class="btn primary" id="toggleRun">Pause</div>
+          </div>
+          <div class="kv">
+            <span>Copy total</span><strong><span id="copyTotal">0 ms</span></strong>
+            <span>Zero-copy total</span><strong><span id="rdmaTotal">0 ms</span></strong>
+            <span>Speedup</span><strong><span id="speedup">1.0x</span></strong>
+          </div>
+          <div class="note">Per-message bar shows where time is spent: copy, DMA, interrupts/polling.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script src="shared.js"></script>
+<script>
+(() => {
+  const { ctx } = SimUI.setupCanvas('c');
+
+  const el = {
+    pSmall: document.getElementById('pSmall'),
+    pMedium: document.getElementById('pMedium'),
+    pBig: document.getElementById('pBig'),
+    pCopyHeavy: document.getElementById('pCopyHeavy'),
+    reset: document.getElementById('reset'),
+    toggleRun: document.getElementById('toggleRun'),
+
+    msgSize: document.getElementById('msgSize'),
+    msgCount: document.getElementById('msgCount'),
+    copyCost: document.getElementById('copyCost'),
+    dmaCost: document.getElementById('dmaCost'),
+    intrCost: document.getElementById('intrCost'),
+    pollCost: document.getElementById('pollCost'),
+    setupCost: document.getElementById('setupCost'),
+
+    sizeVal: document.getElementById('sizeVal'),
+    countVal: document.getElementById('countVal'),
+    copyVal: document.getElementById('copyVal'),
+    dmaVal: document.getElementById('dmaVal'),
+    intrVal: document.getElementById('intrVal'),
+    pollVal: document.getElementById('pollVal'),
+    setupVal: document.getElementById('setupVal'),
+
+    copyTotal: document.getElementById('copyTotal'),
+    rdmaTotal: document.getElementById('rdmaTotal'),
+    speedup: document.getElementById('speedup'),
+  };
+
+  const bindRange = SimUI.bindRange;
+  bindRange(el.msgSize, el.sizeVal, v => v);
+  bindRange(el.msgCount, el.countVal, v => v);
+  bindRange(el.copyCost, el.copyVal, v => Number(v).toFixed(4));
+  bindRange(el.dmaCost, el.dmaVal, v => Number(v).toFixed(4));
+  bindRange(el.intrCost, el.intrVal, v => Number(v).toFixed(1));
+  bindRange(el.pollCost, el.pollVal, v => Number(v).toFixed(1));
+  bindRange(el.setupCost, el.setupVal, v => v);
+
+  let running = true;
+  let t = 0;
+
+  function applyPreset(p) {
+    el.msgSize.value = p.size;
+    el.msgCount.value = p.count;
+    el.copyCost.value = p.copy;
+    el.dmaCost.value = p.dma;
+    el.intrCost.value = p.intr;
+    el.pollCost.value = p.poll;
+    el.setupCost.value = p.setup;
+
+    el.msgSize.dispatchEvent(new Event('input'));
+    el.msgCount.dispatchEvent(new Event('input'));
+    el.copyCost.dispatchEvent(new Event('input'));
+    el.dmaCost.dispatchEvent(new Event('input'));
+    el.intrCost.dispatchEvent(new Event('input'));
+    el.pollCost.dispatchEvent(new Event('input'));
+    el.setupCost.dispatchEvent(new Event('input'));
+    t = 0;
+  }
+
+  el.pSmall.onclick = () => applyPreset({ size:16, count:600, copy:0.0008, dma:0.0002, intr:1.4, poll:0.6, setup:900 });
+  el.pMedium.onclick = () => applyPreset({ size:64, count:400, copy:0.0010, dma:0.0002, intr:2.0, poll:0.6, setup:1200 });
+  el.pBig.onclick = () => applyPreset({ size:256, count:220, copy:0.0010, dma:0.0002, intr:2.2, poll:0.6, setup:1200 });
+  el.pCopyHeavy.onclick = () => applyPreset({ size:128, count:400, copy:0.0022, dma:0.0002, intr:2.4, poll:0.6, setup:1200 });
+  el.reset.onclick = () => applyPreset({ size:64, count:400, copy:0.0010, dma:0.0002, intr:2.0, poll:0.6, setup:1200 });
+
+  el.toggleRun.onclick = () => {
+    running = !running;
+    el.toggleRun.textContent = running ? 'Pause' : 'Play';
+  };
+
+  function drawBar(x, y, w, h, parts, labels) {
+    let offset = 0;
+    parts.forEach((p, i) => {
+      ctx.fillStyle = p.color;
+      const pw = w * p.frac;
+      ctx.fillRect(x + offset, y, pw, h);
+      offset += pw;
+    });
+    ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+    ctx.strokeRect(x, y, w, h);
+
+    ctx.fillStyle = '#c9d3e6';
+    ctx.font = '12px system-ui, sans-serif';
+    let lx = x;
+    labels.forEach((lab, i) => {
+      const part = parts[i];
+      const pw = w * part.frac;
+      if (pw > 40) {
+        ctx.fillText(lab, lx + 6, y + h - 8);
+      }
+      lx += pw;
+    });
+  }
+
+  function tick(ts) {
+    if (running) {
+      t += 0.016;
+    }
+
+    const size = Number(el.msgSize.value);
+    const count = Number(el.msgCount.value);
+    const copyCost = Number(el.copyCost.value);
+    const dmaCost = Number(el.dmaCost.value);
+    const intr = Number(el.intrCost.value);
+    const poll = Number(el.pollCost.value);
+    const setup = Number(el.setupCost.value);
+
+    const base = 0.05;
+    const copyPer = base + size * copyCost + size * dmaCost + intr;
+    const rdmaPer = base + size * dmaCost + poll;
+
+    const copyTotal = copyPer * count;
+    const rdmaTotal = setup + rdmaPer * count;
+    const speedup = copyTotal / rdmaTotal;
+
+    el.copyTotal.textContent = `${copyTotal.toFixed(0)} ms`;
+    el.rdmaTotal.textContent = `${rdmaTotal.toFixed(0)} ms`;
+    el.speedup.textContent = `${speedup.toFixed(2)}x`;
+
+    const w = ctx.canvas.width / (window.devicePixelRatio || 1);
+    const h = ctx.canvas.height / (window.devicePixelRatio || 1);
+
+    ctx.clearRect(0, 0, w, h);
+
+    ctx.fillStyle = '#0d1117';
+    ctx.fillRect(0, 0, w, h);
+
+    ctx.fillStyle = '#e8eef7';
+    ctx.font = '13px system-ui, sans-serif';
+    ctx.fillText('TCP Copy Path (per message)', 30, 32);
+    ctx.fillText('RDMA Zero-Copy (per message)', 30, h / 2 + 24);
+
+    const barX = 30;
+    const barW = w - 60;
+    const barH = 36;
+
+    const copyParts = [
+      { name: 'Copy', color: '#4da3ff', frac: (size * copyCost) / copyPer },
+      { name: 'DMA', color: '#6ee7b7', frac: (size * dmaCost) / copyPer },
+      { name: 'IRQ', color: '#ffb020', frac: intr / copyPer },
+      { name: 'Base', color: '#475569', frac: base / copyPer },
+    ];
+    const rdmaParts = [
+      { name: 'DMA', color: '#6ee7b7', frac: (size * dmaCost) / rdmaPer },
+      { name: 'Poll', color: '#4da3ff', frac: poll / rdmaPer },
+      { name: 'Base', color: '#475569', frac: base / rdmaPer },
+    ];
+
+    drawBar(barX, 50, barW, barH, copyParts, ['Copy', 'DMA', 'IRQ', 'Base']);
+    drawBar(barX, h / 2 + 40, barW, barH, rdmaParts, ['DMA', 'Poll', 'Base']);
+
+    const copyPhase = ((t * 1000) % copyPer) / copyPer;
+    const rdmaPhase = ((t * 1000) % rdmaPer) / rdmaPer;
+
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(barX + barW * copyPhase, 50 + barH / 2, 5, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.arc(barX + barW * rdmaPhase, h / 2 + 40 + barH / 2, 5, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = '#a7b3c5';
+    ctx.font = '12px system-ui, sans-serif';
+    ctx.fillText(`Per-msg: ${copyPer.toFixed(2)} ms`, barX, 50 + barH + 20);
+    ctx.fillText(`Per-msg: ${rdmaPer.toFixed(2)} ms (+${setup.toFixed(0)} ms setup)`, barX, h / 2 + 40 + barH + 20);
+
+    ctx.fillStyle = '#e8eef7';
+    ctx.font = '13px system-ui, sans-serif';
+    ctx.fillText(`Total (copy): ${copyTotal.toFixed(0)} ms`, barX, h - 50);
+    ctx.fillText(`Total (zero-copy): ${rdmaTotal.toFixed(0)} ms`, barX, h - 28);
+
+    requestAnimationFrame(tick);
+  }
+
+  applyPreset({ size:64, count:400, copy:0.0010, dma:0.0002, intr:2.0, poll:0.6, setup:1200 });
+  requestAnimationFrame(tick);
+})();
+</script>
+</body>
+</html>

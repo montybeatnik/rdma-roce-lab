@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Loss Amplification: Go-Back-N vs Selective</title>
+  <link rel="stylesheet" href="shared.css" />
+</head>
+<body>
+  <div class="wrap">
+    <h1>Loss Amplification: Go-Back-N vs Selective</h1>
+    <p class="sub">
+      When a packet is lost, Go-Back-N retransmits everything after it, amplifying loss. Selective retransmit
+      only resends what was actually lost. Watch how the amplification ratio grows.
+    </p>
+
+    <div class="grid">
+      <div class="card">
+        <div class="canvasWrap">
+          <canvas id="c"></canvas>
+        </div>
+      </div>
+
+      <div class="card controls">
+        <div class="ctl">
+          <label><span>Mode</span><span class="pill" id="modeLabel">Go-Back-N</span></label>
+          <div class="tog">
+            <div class="btn primary" id="modeGBN">Go-Back-N</div>
+            <div class="btn" id="modeSel">Selective</div>
+          </div>
+          <div class="note">Go-Back-N = resend all after loss. Selective = resend only lost packets.</div>
+        </div>
+
+        <div class="ctl">
+          <label><span>Loss Probability</span><strong><span id="lossVal">1.0%</span></strong></label>
+          <input id="lossProb" type="range" min="0.2" max="6" step="0.2" value="1" />
+        </div>
+
+        <div class="ctl">
+          <label><span>Loss Burst (packets)</span><strong><span id="burstVal">2</span></strong></label>
+          <input id="lossBurst" type="range" min="1" max="6" step="1" value="2" />
+        </div>
+
+        <div class="ctl">
+          <label><span>Inflight Window</span><strong><span id="winVal">16</span></strong></label>
+          <input id="windowSize" type="range" min="4" max="32" step="1" value="16" />
+        </div>
+
+        <div class="ctl">
+          <label><span>Timeout (ms)</span><strong><span id="toVal">220</span></strong></label>
+          <input id="timeout" type="range" min="80" max="400" step="10" value="220" />
+        </div>
+
+        <div class="ctl">
+          <div class="tog">
+            <div class="btn primary" id="toggleRun">Pause</div>
+            <div class="btn danger" id="reset">Reset</div>
+          </div>
+          <div class="kv">
+            <span>Sent</span><strong><span id="sent">0</span></strong>
+            <span>Acked</span><strong><span id="acked">0</span></strong>
+            <span>Retrans</span><strong><span id="retrans">0</span></strong>
+            <span>Amplification</span><strong><span id="amp">1.0x</span></strong>
+          </div>
+          <div class="note">Amplification = sent / acked. High means more waste.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script src="shared.js"></script>
+<script>
+(() => {
+  const { ctx } = SimUI.setupCanvas('c');
+
+  const el = {
+    modeLabel: document.getElementById('modeLabel'),
+    modeGBN: document.getElementById('modeGBN'),
+    modeSel: document.getElementById('modeSel'),
+    lossProb: document.getElementById('lossProb'),
+    lossBurst: document.getElementById('lossBurst'),
+    windowSize: document.getElementById('windowSize'),
+    timeout: document.getElementById('timeout'),
+    lossVal: document.getElementById('lossVal'),
+    burstVal: document.getElementById('burstVal'),
+    winVal: document.getElementById('winVal'),
+    toVal: document.getElementById('toVal'),
+    toggleRun: document.getElementById('toggleRun'),
+    reset: document.getElementById('reset'),
+    sent: document.getElementById('sent'),
+    acked: document.getElementById('acked'),
+    retrans: document.getElementById('retrans'),
+    amp: document.getElementById('amp'),
+  };
+
+  const bindRange = SimUI.bindRange;
+  bindRange(el.lossProb, el.lossVal, v => `${Number(v).toFixed(1)}%`);
+  bindRange(el.lossBurst, el.burstVal, v => v);
+  bindRange(el.windowSize, el.winVal, v => v);
+  bindRange(el.timeout, el.toVal, v => v);
+
+  let running = true;
+  let mode = 'gbn';
+
+  let nextSeq = 1;
+  let baseAck = 1;
+  let inflight = [];
+  let ackedSet = new Set();
+  let pendingRetrans = [];
+
+  let burstLeft = 0;
+  let recoverFrom = null;
+  let timeoutTimer = 0;
+
+  let stats = { sent: 0, acked: 0, retrans: 0 };
+
+  function setMode(m) {
+    mode = m;
+    el.modeLabel.textContent = m === 'gbn' ? 'Go-Back-N' : 'Selective';
+    el.modeGBN.classList.toggle('primary', m === 'gbn');
+    el.modeSel.classList.toggle('primary', m !== 'gbn');
+  }
+
+  el.modeGBN.onclick = () => setMode('gbn');
+  el.modeSel.onclick = () => setMode('sel');
+
+  function reset() {
+    nextSeq = 1;
+    baseAck = 1;
+    inflight = [];
+    ackedSet = new Set();
+    pendingRetrans = [];
+    burstLeft = 0;
+    recoverFrom = null;
+    timeoutTimer = 0;
+    stats = { sent: 0, acked: 0, retrans: 0 };
+  }
+
+  el.reset.onclick = reset;
+
+  el.toggleRun.onclick = () => {
+    running = !running;
+    el.toggleRun.textContent = running ? 'Pause' : 'Play';
+  };
+
+  function lossHit(prob) {
+    if (burstLeft > 0) {
+      burstLeft -= 1;
+      return true;
+    }
+    if (Math.random() < prob) {
+      burstLeft = Math.max(0, Number(el.lossBurst.value) - 1);
+      return true;
+    }
+    return false;
+  }
+
+  function sendPacket(seq, isRetrans) {
+    inflight.push({ seq, progress: 0, retrans: isRetrans });
+    stats.sent += 1;
+    if (isRetrans) stats.retrans += 1;
+  }
+
+  function tick() {
+    if (!running) {
+      requestAnimationFrame(tick);
+      return;
+    }
+
+    const lossProb = Number(el.lossProb.value) / 100;
+    const windowSize = Number(el.windowSize.value);
+    const timeoutMs = Number(el.timeout.value);
+
+    while (inflight.length < windowSize && recoverFrom === null) {
+      sendPacket(nextSeq, false);
+      nextSeq += 1;
+    }
+
+    if (mode === 'sel' && pendingRetrans.length) {
+      for (let i = pendingRetrans.length - 1; i >= 0; i--) {
+        const p = pendingRetrans[i];
+        p.timer -= 16;
+        if (p.timer <= 0) {
+          if (!ackedSet.has(p.seq)) {
+            sendPacket(p.seq, true);
+          }
+          pendingRetrans.splice(i, 1);
+        }
+      }
+    }
+
+    for (const pkt of inflight) {
+      pkt.progress += 0.012;
+    }
+
+    const arrived = inflight.filter(p => p.progress >= 1);
+    inflight = inflight.filter(p => p.progress < 1);
+
+    for (const pkt of arrived) {
+      const lost = lossHit(lossProb);
+      if (lost) {
+        if (mode === 'gbn') {
+          if (recoverFrom === null || pkt.seq < recoverFrom) {
+            recoverFrom = pkt.seq;
+            timeoutTimer = timeoutMs;
+          }
+        } else {
+          pendingRetrans.push({ seq: pkt.seq, timer: timeoutMs });
+        }
+      } else {
+        if (mode === 'gbn') {
+          if (recoverFrom !== null && pkt.seq >= recoverFrom) {
+            continue;
+          }
+          if (pkt.seq === baseAck) {
+            ackedSet.add(pkt.seq);
+            baseAck += 1;
+            stats.acked += 1;
+            while (ackedSet.has(baseAck)) {
+              baseAck += 1;
+            }
+          } else {
+            ackedSet.add(pkt.seq);
+          }
+        } else {
+          if (!ackedSet.has(pkt.seq)) {
+            ackedSet.add(pkt.seq);
+            stats.acked += 1;
+          }
+        }
+      }
+    }
+
+    if (recoverFrom !== null) {
+      timeoutTimer -= 16;
+      if (timeoutTimer <= 0) {
+        inflight = inflight.filter(p => p.seq < recoverFrom);
+        nextSeq = recoverFrom;
+        recoverFrom = null;
+      }
+    }
+
+    const amp = stats.acked ? stats.sent / stats.acked : 1;
+
+    el.sent.textContent = stats.sent;
+    el.acked.textContent = stats.acked;
+    el.retrans.textContent = stats.retrans;
+    el.amp.textContent = `${amp.toFixed(2)}x`;
+
+    const w = ctx.canvas.width / (window.devicePixelRatio || 1);
+    const h = ctx.canvas.height / (window.devicePixelRatio || 1);
+    ctx.clearRect(0, 0, w, h);
+
+    ctx.fillStyle = '#0d1117';
+    ctx.fillRect(0, 0, w, h);
+
+    const leftX = 80;
+    const rightX = w - 80;
+    const laneY = h / 2;
+
+    ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(leftX, laneY);
+    ctx.lineTo(rightX, laneY);
+    ctx.stroke();
+
+    ctx.fillStyle = '#e8eef7';
+    ctx.font = '12px system-ui, sans-serif';
+    ctx.fillText('Sender', leftX - 20, laneY - 18);
+    ctx.fillText('Receiver', rightX - 30, laneY - 18);
+
+    for (const pkt of inflight) {
+      const x = leftX + (rightX - leftX) * pkt.progress;
+      ctx.fillStyle = pkt.retrans ? '#ffb020' : '#4da3ff';
+      ctx.fillRect(x - 4, laneY - 6, 8, 12);
+    }
+
+    if (recoverFrom !== null) {
+      ctx.fillStyle = '#ff5c5c';
+      ctx.fillText(`Loss detected at seq ${recoverFrom}`, leftX, laneY + 30);
+    }
+
+    ctx.fillStyle = '#a7b3c5';
+    ctx.fillText(`Base ACK: ${baseAck}`, leftX, laneY + 52);
+    ctx.fillText(`In-flight: ${inflight.length}`, leftX + 120, laneY + 52);
+
+    requestAnimationFrame(tick);
+  }
+
+  setMode('gbn');
+  reset();
+  requestAnimationFrame(tick);
+})();
+</script>
+</body>
+</html>

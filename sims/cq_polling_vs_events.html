@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>CQ Polling vs Events</title>
+  <link rel="stylesheet" href="shared.css" />
+</head>
+<body>
+  <div class="wrap">
+    <h1>CQ Polling vs Event-Driven</h1>
+    <p class="sub">
+      Polling burns CPU to keep latency low; events save CPU but add wakeup delays. This sim tracks queue depth,
+      latency, and CPU usage for both approaches.
+    </p>
+
+    <div class="grid">
+      <div class="card">
+        <div class="canvasWrap">
+          <canvas id="c"></canvas>
+        </div>
+      </div>
+
+      <div class="card controls">
+        <div class="ctl">
+          <label><span>Presets</span><span class="pill">Scenes</span></label>
+          <div class="tog">
+            <div class="btn primary" id="pLow">Low load</div>
+            <div class="btn" id="pHigh">High load</div>
+            <div class="btn" id="pBatch">Batching</div>
+            <div class="btn" id="pLatency">Low latency</div>
+            <div class="btn danger" id="reset">Reset</div>
+          </div>
+          <div class="note">Use <strong>Batching</strong> to show how events trade latency for CPU.</div>
+        </div>
+
+        <div class="ctl">
+          <label><span>Poll Rate (polls/sec)</span><strong><span id="pollVal">6000</span></strong></label>
+          <input id="pollRate" type="range" min="500" max="12000" step="100" value="6000" />
+        </div>
+
+        <div class="ctl">
+          <label><span>Completion Rate (cps)</span><strong><span id="compVal">1200</span></strong></label>
+          <input id="compRate" type="range" min="200" max="4000" step="100" value="1200" />
+        </div>
+
+        <div class="ctl">
+          <label><span>Batch Size</span><strong><span id="batchVal">8</span></strong></label>
+          <input id="batchSize" type="range" min="1" max="32" step="1" value="8" />
+        </div>
+
+        <div class="ctl">
+          <label><span>Wakeup Cost (ms)</span><strong><span id="wakeVal">12</span></strong></label>
+          <input id="wakeCost" type="range" min="2" max="30" step="1" value="12" />
+        </div>
+
+        <div class="ctl">
+          <label><span>Poll Cost (ms per poll)</span><strong><span id="pollCostVal">0.08</span></strong></label>
+          <input id="pollCost" type="range" min="0.02" max="0.30" step="0.01" value="0.08" />
+        </div>
+
+        <div class="ctl">
+          <div class="tog">
+            <div class="btn primary" id="toggleRun">Pause</div>
+          </div>
+          <div class="kv">
+            <span>Polling latency</span><strong><span id="pollLat">0 ms</span></strong>
+            <span>Event latency</span><strong><span id="evLat">0 ms</span></strong>
+            <span>CPU (poll vs event)</span><strong><span id="cpu">0%</span></strong>
+          </div>
+          <div class="note">Latency is rolling average of completion wait time.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script src="shared.js"></script>
+<script>
+(() => {
+  const { ctx } = SimUI.setupCanvas('c');
+
+  const el = {
+    pLow: document.getElementById('pLow'),
+    pHigh: document.getElementById('pHigh'),
+    pBatch: document.getElementById('pBatch'),
+    pLatency: document.getElementById('pLatency'),
+    reset: document.getElementById('reset'),
+    toggleRun: document.getElementById('toggleRun'),
+
+    pollRate: document.getElementById('pollRate'),
+    compRate: document.getElementById('compRate'),
+    batchSize: document.getElementById('batchSize'),
+    wakeCost: document.getElementById('wakeCost'),
+    pollCost: document.getElementById('pollCost'),
+
+    pollVal: document.getElementById('pollVal'),
+    compVal: document.getElementById('compVal'),
+    batchVal: document.getElementById('batchVal'),
+    wakeVal: document.getElementById('wakeVal'),
+    pollCostVal: document.getElementById('pollCostVal'),
+
+    pollLat: document.getElementById('pollLat'),
+    evLat: document.getElementById('evLat'),
+    cpu: document.getElementById('cpu'),
+  };
+
+  const bindRange = SimUI.bindRange;
+  bindRange(el.pollRate, el.pollVal, v => v);
+  bindRange(el.compRate, el.compVal, v => v);
+  bindRange(el.batchSize, el.batchVal, v => v);
+  bindRange(el.wakeCost, el.wakeVal, v => v);
+  bindRange(el.pollCost, el.pollCostVal, v => Number(v).toFixed(2));
+
+  let running = true;
+
+  let pollQueue = [];
+  let evQueue = [];
+  let pollLast = 0;
+  let evWakeTimer = null;
+
+  let pollLatAvg = 0;
+  let evLatAvg = 0;
+
+  function applyPreset(p) {
+    el.pollRate.value = p.poll;
+    el.compRate.value = p.comp;
+    el.batchSize.value = p.batch;
+    el.wakeCost.value = p.wake;
+    el.pollCost.value = p.pollCost;
+    el.pollRate.dispatchEvent(new Event('input'));
+    el.compRate.dispatchEvent(new Event('input'));
+    el.batchSize.dispatchEvent(new Event('input'));
+    el.wakeCost.dispatchEvent(new Event('input'));
+    el.pollCost.dispatchEvent(new Event('input'));
+    pollQueue = [];
+    evQueue = [];
+    pollLast = 0;
+    evWakeTimer = null;
+    pollLatAvg = 0;
+    evLatAvg = 0;
+  }
+
+  el.pLow.onclick = () => applyPreset({ poll:4000, comp:600, batch:8, wake:10, pollCost:0.06 });
+  el.pHigh.onclick = () => applyPreset({ poll:9000, comp:3200, batch:8, wake:12, pollCost:0.08 });
+  el.pBatch.onclick = () => applyPreset({ poll:4500, comp:1600, batch:16, wake:18, pollCost:0.06 });
+  el.pLatency.onclick = () => applyPreset({ poll:9000, comp:1200, batch:4, wake:6, pollCost:0.08 });
+  el.reset.onclick = () => applyPreset({ poll:6000, comp:1200, batch:8, wake:12, pollCost:0.08 });
+
+  el.toggleRun.onclick = () => {
+    running = !running;
+    el.toggleRun.textContent = running ? 'Pause' : 'Play';
+  };
+
+  function enqueue(queue, ts) {
+    queue.push(ts);
+    if (queue.length > 400) queue.shift();
+  }
+
+  function processQueue(queue, now, batch) {
+    let count = 0;
+    let latSum = 0;
+    while (queue.length && count < batch) {
+      const ts = queue.shift();
+      latSum += now - ts;
+      count += 1;
+    }
+    if (!count) return null;
+    return latSum / count;
+  }
+
+  function tick() {
+    const now = performance.now();
+    if (!running) {
+      requestAnimationFrame(tick);
+      return;
+    }
+
+    const pollRate = Number(el.pollRate.value);
+    const compRate = Number(el.compRate.value);
+    const batch = Number(el.batchSize.value);
+    const wake = Number(el.wakeCost.value);
+    const pollCost = Number(el.pollCost.value);
+
+    const dt = 16; // ms per frame approx
+    const arrivals = compRate * (dt / 1000);
+    const arrivalCount = Math.random() < (arrivals % 1) ? Math.ceil(arrivals) : Math.floor(arrivals);
+
+    for (let i = 0; i < arrivalCount; i++) {
+      enqueue(pollQueue, now);
+      enqueue(evQueue, now);
+    }
+
+    if (now - pollLast >= 1000 / pollRate) {
+      pollLast = now;
+      const lat = processQueue(pollQueue, now, batch);
+      if (lat !== null) {
+        pollLatAvg = pollLatAvg * 0.9 + lat * 0.1;
+      }
+    }
+
+    if (evQueue.length && evWakeTimer === null) {
+      evWakeTimer = now + wake;
+    }
+    if (evWakeTimer !== null && now >= evWakeTimer) {
+      evWakeTimer = null;
+      const lat = processQueue(evQueue, now, batch);
+      if (lat !== null) {
+        evLatAvg = evLatAvg * 0.9 + lat * 0.1;
+      }
+    }
+
+    const pollCpu = Math.min(100, pollRate * pollCost / 10);
+    const evCpu = Math.min(100, (evQueue.length ? (1000 / Math.max(1, wake)) * 0.03 : 0));
+
+    el.pollLat.textContent = `${pollLatAvg.toFixed(1)} ms`;
+    el.evLat.textContent = `${evLatAvg.toFixed(1)} ms`;
+    el.cpu.textContent = `${pollCpu.toFixed(0)}% / ${evCpu.toFixed(0)}%`;
+
+    const w = ctx.canvas.width / (window.devicePixelRatio || 1);
+    const h = ctx.canvas.height / (window.devicePixelRatio || 1);
+    ctx.clearRect(0, 0, w, h);
+
+    ctx.fillStyle = '#0d1117';
+    ctx.fillRect(0, 0, w, h);
+
+    const pad = 40;
+    const mid = h / 2;
+
+    function drawLane(y, label, queue, cpu, lat, color) {
+      ctx.fillStyle = '#e8eef7';
+      ctx.font = '13px system-ui, sans-serif';
+      ctx.fillText(label, pad, y - 14);
+
+      ctx.fillStyle = 'rgba(255,255,255,0.08)';
+      ctx.fillRect(pad, y, w - pad * 2, 18);
+      const qWidth = Math.min(w - pad * 2, queue.length * 6);
+      ctx.fillStyle = color;
+      ctx.fillRect(pad, y, qWidth, 18);
+
+      ctx.fillStyle = '#a7b3c5';
+      ctx.fillText(`Queue: ${queue.length}`, pad, y + 38);
+      ctx.fillText(`Latency: ${lat.toFixed(1)} ms`, pad + 120, y + 38);
+
+      ctx.fillStyle = 'rgba(255,255,255,0.08)';
+      ctx.fillRect(pad, y + 52, 160, 10);
+      ctx.fillStyle = color;
+      ctx.fillRect(pad, y + 52, 160 * Math.min(1, cpu / 100), 10);
+      ctx.fillStyle = '#a7b3c5';
+      ctx.fillText(`CPU: ${cpu.toFixed(0)}%`, pad + 170, y + 61);
+    }
+
+    drawLane(80, 'Polling Loop', pollQueue, pollCpu, pollLatAvg, '#4da3ff');
+    drawLane(mid + 40, 'Event-Driven', evQueue, evCpu, evLatAvg, '#ffb020');
+
+    requestAnimationFrame(tick);
+  }
+
+  applyPreset({ poll:6000, comp:1200, batch:8, wake:12, pollCost:0.08 });
+  requestAnimationFrame(tick);
+})();
+</script>
+</body>
+</html>
