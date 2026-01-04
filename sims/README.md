@@ -11,7 +11,7 @@ See `MECHANICS.md` for the mechanics-focused sequence:
 - Two-sided vs one-sided operations
 - CQ depth and signaling
 
-Open: `MECHANICS.md`
+Open: [MECHANICS.md](MECHANICS.md)
 
 ## Learning order (start here)
 
