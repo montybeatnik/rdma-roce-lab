@@ -51,5 +51,4 @@ See `MECHANICS.md` for the mechanics-focused sequence:
 
 ## Notes
 
-- Sims are deterministic enough for screen recording, but small random elements keep them alive.
-- For Keynote or slides, record 10–20s clips and loop.
+- Sims are deterministic enough for comparisons, but small random elements keep them alive.

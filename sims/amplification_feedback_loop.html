@@ -11,7 +11,6 @@
     <h1>Amplification Feedback Loop</h1>
     <p class="sub">
       A visual simulation of how small delays can amplify: delay → queue buildup → sync waits → retries/backoff → more delay.
-      Use this to generate short, consistent clips for slides.
     </p>
 
     <div class="grid">
@@ -72,7 +71,7 @@
           </div>
 
           <div class="note">
-            Tip for recording: set <strong>Amplifying</strong>, speed ~1.1, gain ~1.25, noise ~0.08, record 12–18 seconds.
+            Tip: set <strong>Amplifying</strong>, speed ~1.1, gain ~1.25, noise ~0.08 for a clean runaway demo.
           </div>
         </div>
       </div>
@@ -372,7 +371,7 @@
 
     severity = clamp(severity, 0, 1);
 
-    // record history
+    // update history
     pushHist(severity);
 
     // UI
