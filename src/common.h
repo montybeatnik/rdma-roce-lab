@@ -20,10 +20,12 @@
 
 #pragma once
 #include <arpa/inet.h>
+#include <errno.h>
 #include <infiniband/verbs.h>
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 #include <sys/time.h>
 #include <time.h>
 #include <unistd.h>
@@ -85,6 +87,7 @@ static inline void logf_impl(const char *func, const char *tag, const char *fmt,
 #ifdef RDMA_VERBOSE
 #define LOG(fmt, ...) logf_impl(__func__, "INFO", fmt, ##__VA_ARGS__)
 #define LOGF(tag, fmt, ...) logf_impl(__func__, tag, fmt, ##__VA_ARGS__)
+#define LOG_ERR(fmt, ...) logf_impl(__func__, "ERR", fmt, ##__VA_ARGS__)
 #else
 #define LOG(fmt, ...)                                                                                                  \
     do                                                                                                                 \
@@ -98,17 +101,21 @@ static inline void logf_impl(const char *func, const char *tag, const char *fmt,
         if (0)                                                                                                         \
             logf_impl(__func__, tag, fmt, ##__VA_ARGS__);                                                              \
     } while (0)
+#define LOG_ERR(fmt, ...) logf_impl(__func__, "ERR", fmt, ##__VA_ARGS__)
 #endif
-#define CHECK(x, msg)                                                                                                  \
+
+#define ERRF(fmt, ...)                                                                                                 \
     do                                                                                                                 \
     {                                                                                                                  \
-        if ((x))                                                                                                       \
-        {                                                                                                              \
-            perror(msg);                                                                                               \
-            LOG("FAIL at %s:%d", __FILE__, __LINE__);                                                                  \
-            _exit(1);                                                                                                  \
-        }                                                                                                              \
+        LOG_ERR(fmt, ##__VA_ARGS__);                                                                                   \
+        return -1;                                                                                                     \
     } while (0)
+
+static inline int err_errno(const char *ctx)
+{
+    LOG_ERR("%s: %s", ctx, strerror(errno));
+    return -1;
+}
 
 static inline const char *qp_state_str(enum ibv_qp_state s)
 {

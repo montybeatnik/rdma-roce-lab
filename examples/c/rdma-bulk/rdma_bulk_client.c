@@ -44,6 +44,7 @@ static double elapsed_sec(const struct timespec *start, const struct timespec *e
 
 int main(int argc, char **argv)
 {
+    int err = 0;
     if (argc < 3)
     {
         fprintf(stderr, "Usage: %s <server-ip> <port> [bytes] [chunk]\n", argv[0]);
@@ -62,13 +63,33 @@ int main(int argc, char **argv)
     }
 
     rdma_ctx c = {0};
-    cm_create_channel_and_id(&c);
-    CHECK(cm_client_resolve(&c, ip, port, NULL), "resolve");
-    build_pd_cq_qp(&c, IBV_QPT_RC, 256, 128, 128, 1);
-    CHECK(cm_client_connect_only(&c, 1, 1), "rdma_connect");
+    if (cm_create_channel_and_id(&c))
+    {
+        err = 1;
+        goto cleanup;
+    }
+    if (cm_client_resolve(&c, ip, port, NULL))
+    {
+        err = 1;
+        goto cleanup;
+    }
+    if (build_pd_cq_qp(&c, IBV_QPT_RC, 256, 128, 128, 1))
+    {
+        err = 1;
+        goto cleanup;
+    }
+    if (cm_client_connect_only(&c, 1, 1))
+    {
+        err = 1;
+        goto cleanup;
+    }
 
     struct rdma_conn_param connp = {0};
-    CHECK(cm_wait_connected(&c, &connp), "ESTABLISHED");
+    if (cm_wait_connected(&c, &connp))
+    {
+        err = 1;
+        goto cleanup;
+    }
 
     struct bulk_info info = {0};
     if (connp.private_data && connp.private_data_len >= sizeof(info))
@@ -78,7 +99,8 @@ int main(int argc, char **argv)
     else
     {
         fprintf(stderr, "No or short private_data\n");
-        return 2;
+        err = 2;
+        goto cleanup;
     }
 
     uint64_t remote_len = 0;
@@ -89,7 +111,11 @@ int main(int argc, char **argv)
         total = remote_len;
     }
 
-    alloc_and_reg(&c, &c.buf_tx, &c.mr_tx, (size_t)chunk, IBV_ACCESS_LOCAL_WRITE);
+    if (alloc_and_reg(&c, &c.buf_tx, &c.mr_tx, (size_t)chunk, IBV_ACCESS_LOCAL_WRITE))
+    {
+        err = 1;
+        goto cleanup;
+    }
     memset(c.buf_tx, 0x5a, (size_t)chunk);
 
     struct timespec t0, t1;
@@ -109,9 +135,12 @@ int main(int argc, char **argv)
         uint64_t this_chunk = remaining < chunk ? remaining : chunk;
         current_batch++;
         int do_signal = (current_batch == signal_every) || (sent + this_chunk == total);
-        CHECK(post_write(c.qp, c.mr_tx, c.buf_tx, c.remote_addr + sent, c.remote_rkey, (size_t)this_chunk, wr_id++,
-                         do_signal),
-              "post_write");
+        if (post_write(c.qp, c.mr_tx, c.buf_tx, c.remote_addr + sent, c.remote_rkey, (size_t)this_chunk, wr_id++,
+                       do_signal))
+        {
+            err = 1;
+            goto cleanup;
+        }
         inflight++;
         if (do_signal)
         {
@@ -122,7 +151,11 @@ int main(int argc, char **argv)
         if (inflight >= max_outstanding)
         {
             struct ibv_wc wc;
-            CHECK(poll_one(c.cq, &wc), "poll write");
+            if (poll_one(c.cq, &wc))
+            {
+                err = 1;
+                goto cleanup;
+            }
             inflight -= batch_sizes[batch_head];
             batch_head = (batch_head + 1) % (int)(sizeof(batch_sizes) / sizeof(batch_sizes[0]));
         }
@@ -131,7 +164,11 @@ int main(int argc, char **argv)
     while (batch_head != batch_tail)
     {
         struct ibv_wc wc;
-        CHECK(poll_one(c.cq, &wc), "poll write");
+        if (poll_one(c.cq, &wc))
+        {
+            err = 1;
+            goto cleanup;
+        }
         inflight -= batch_sizes[batch_head];
         batch_head = (batch_head + 1) % (int)(sizeof(batch_sizes) / sizeof(batch_sizes[0]));
     }
@@ -143,6 +180,7 @@ int main(int argc, char **argv)
 
     rdma_disconnect(c.id);
 
+cleanup:
     mem_free_all(&c);
     if (c.qp)
         rdma_destroy_qp(c.id);
@@ -154,5 +192,5 @@ int main(int argc, char **argv)
         rdma_destroy_id(c.id);
     if (c.ec)
         rdma_destroy_event_channel(c.ec);
-    return 0;
+    return err;
 }

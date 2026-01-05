@@ -4,25 +4,39 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define T(expr)                                                          \
-  do {                                                                   \
-    if (!(expr)) {                                                       \
-      fprintf(stderr, "FAIL: %s at %s:%d\n", #expr, __FILE__, __LINE__); \
-      return 1;                                                          \
-    }                                                                    \
-  } while (0)
-static int is_aligned(void *p, size_t align) {
-  return ((uintptr_t)p % align) == 0;
+static int is_aligned(void *p, size_t align)
+{
+    return ((uintptr_t)p % align) == 0;
 }
 
-int main(void) {
-  void *p = NULL;
-  int rc = posix_memalign(&p, 4096, 8192);
-  T(rc == 0);
-  T(p != NULL);
-  T(is_aligned(p, 4096));
-  memset(p, 0xAB, 8192);
-  free(p);
-  puts("OK test_mem");
-  return 0;
+int main(void)
+{
+    int err = 0;
+    void *p = NULL;
+    int rc = posix_memalign(&p, 4096, 8192);
+    if (rc != 0)
+    {
+        fprintf(stderr, "FAIL: posix_memalign rc=%d at %s:%d\n", rc, __FILE__, __LINE__);
+        err = 1;
+        goto cleanup;
+    }
+    if (!p)
+    {
+        fprintf(stderr, "FAIL: NULL pointer at %s:%d\n", __FILE__, __LINE__);
+        err = 1;
+        goto cleanup;
+    }
+    if (!is_aligned(p, 4096))
+    {
+        fprintf(stderr, "FAIL: alignment mismatch at %s:%d\n", __FILE__, __LINE__);
+        err = 1;
+        goto cleanup;
+    }
+    memset(p, 0xAB, 8192);
+
+cleanup:
+    free(p);
+    if (!err)
+        puts("OK test_mem");
+    return err;
 }

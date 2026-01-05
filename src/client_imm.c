@@ -41,6 +41,7 @@
 
 int main(int argc, char **argv)
 {
+    int err = 0;
     if (argc < 3)
     {
         fprintf(stderr, "Usage: %s <server-ip> <port>\n", argv[0]);
@@ -61,27 +62,47 @@ int main(int argc, char **argv)
     // --- connect & setup (new flow) ---
     rdma_ctx c = {0};
     LOGF("SLOW", "create CM channel + ID");
-    cm_create_channel_and_id(&c);
+    if (cm_create_channel_and_id(&c))
+    {
+        err = 1;
+        goto cleanup;
+    }
 
     // 1) Resolve first (ADDR/ROUTE)
     LOGF("SLOW", "resolve %s:%s", ip, port);
     LOGF("SLOW", "  src_ip=%s", src_ip ? src_ip : "default");
-    CHECK(cm_client_resolve(&c, ip, port, src_ip), "resolve");
+    if (cm_client_resolve(&c, ip, port, src_ip))
+    {
+        err = 1;
+        goto cleanup;
+    }
 
     // 2) Build PD/CQ/QP BEFORE rdma_connect
     LOGF("SLOW", "build PD/CQ/QP");
-    build_pd_cq_qp(&c, IBV_QPT_RC, 64, 32, 32, 1);
+    if (build_pd_cq_qp(&c, IBV_QPT_RC, 64, 32, 32, 1))
+    {
+        err = 1;
+        goto cleanup;
+    }
 
     // 3) rdma_connect with tiny credits (SoftRoCE-friendly)
     LOGF("SLOW", "rdma_connect");
     LOGF("SLOW", "  initiator_depth=%u", initiator_depth);
     LOGF("SLOW", "  responder_resources=%u", responder_resources);
-    CHECK(cm_client_connect_only(&c, initiator_depth, responder_resources), "rdma_connect");
+    if (cm_client_connect_only(&c, initiator_depth, responder_resources))
+    {
+        err = 1;
+        goto cleanup;
+    }
 
     // 4) Wait for ESTABLISHED and pull private_data safely
     struct rdma_conn_param connp = {0};
     LOGF("SLOW", "wait ESTABLISHED");
-    CHECK(cm_wait_connected(&c, &connp), "ESTABLISHED");
+    if (cm_wait_connected(&c, &connp))
+    {
+        err = 1;
+        goto cleanup;
+    }
 
     struct remote_buf_info info = {0};
     LOGF("SLOW", "read private_data (remote addr/rkey)");
@@ -92,14 +113,19 @@ int main(int argc, char **argv)
     else
     {
         fprintf(stderr, "No private_data\n");
-        return 2;
+        err = 2;
+        goto cleanup;
     }
     unpack_remote_buf_info(&info, &c.remote_addr, &c.remote_rkey);
     LOGF("SLOW", "remote addr=%#lx", (unsigned long)c.remote_addr);
     LOGF("SLOW", "remote rkey=0x%x", c.remote_rkey);
 
     LOGF("FAST", "register local TX");
-    alloc_and_reg(&c, &c.buf_tx, &c.mr_tx, BUF_SZ, IBV_ACCESS_LOCAL_WRITE);
+    if (alloc_and_reg(&c, &c.buf_tx, &c.mr_tx, BUF_SZ, IBV_ACCESS_LOCAL_WRITE))
+    {
+        err = 1;
+        goto cleanup;
+    }
     strcpy((char *)c.buf_tx, "client-wrote-with-imm");
 
     // RDMA_WRITE_WITH_IMM: include imm_data (e.g., payload length or tag)
@@ -120,15 +146,25 @@ int main(int argc, char **argv)
     LOGF("DATA", "post RDMA_WRITE_WITH_IMM len=%u", s.length);
     LOGF("DATA", "  imm_data host=%u", ntohl(imm));
     LOGF("DATA", "  imm_data net=0x%x", imm);
-    CHECK(/* Post a SEND/WRITE/READ WQE to SQ */ ibv_post_send(c.qp, &wr, &bad), "ibv_post_send write_with_imm");
+    if (ibv_post_send(c.qp, &wr, &bad))
+    {
+        err_errno("ibv_post_send write_with_imm");
+        err = 1;
+        goto cleanup;
+    }
 
     struct ibv_wc wc;
     LOGF("DATA", "poll RDMA_WRITE_WITH_IMM");
-    CHECK(poll_one(c.cq, &wc), "poll write_with_imm");
+    if (poll_one(c.cq, &wc))
+    {
+        err = 1;
+        goto cleanup;
+    }
     LOGF("DATA", "RDMA_WRITE_WITH_IMM completed");
 
     rdma_disconnect(c.id);
 
+cleanup:
     mem_free_all(&c);
     if (c.qp)
         rdma_destroy_qp(c.id);
@@ -141,5 +177,5 @@ int main(int argc, char **argv)
     if (c.ec)
         rdma_destroy_event_channel(c.ec);
     LOG("Done");
-    return 0;
+    return err;
 }

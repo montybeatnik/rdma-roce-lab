@@ -40,26 +40,47 @@
 
 int main(int argc, char **argv)
 {
+    int err = 0;
     const char *port = (argc >= 2) ? argv[1] : "7472";
     const char *bind_ip = getenv("RDMA_BIND_IP");
 
     rdma_ctx c = {0};
     LOGF("SLOW", "create CM channel + listen");
-    cm_create_channel_and_id(&c);
-    cm_server_listen(&c, bind_ip, port);
+    if (cm_create_channel_and_id(&c))
+    {
+        err = 1;
+        goto cleanup;
+    }
+    if (cm_server_listen(&c, bind_ip, port))
+    {
+        err = 1;
+        goto cleanup;
+    }
 
     LOGF("SLOW", "wait CONNECT_REQUEST");
     struct rdma_cm_event *ev;
-    CHECK(cm_wait_event(&c, RDMA_CM_EVENT_CONNECT_REQUEST, &ev), "CONNECT_REQUEST");
+    if (cm_wait_event(&c, RDMA_CM_EVENT_CONNECT_REQUEST, &ev))
+    {
+        err = 1;
+        goto cleanup;
+    }
     c.id = ev->id;
     rdma_ack_cm_event(ev);
 
     LOGF("SLOW", "build PD/CQ/QP");
-    build_pd_cq_qp(&c, IBV_QPT_RC, 64, 32, 32, 1);
+    if (build_pd_cq_qp(&c, IBV_QPT_RC, 64, 32, 32, 1))
+    {
+        err = 1;
+        goto cleanup;
+    }
 
     LOGF("SLOW", "register remote-exposed MR");
-    alloc_and_reg(&c, &c.buf_remote, &c.mr_remote, BUF_SZ,
-                  IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_WRITE);
+    if (alloc_and_reg(&c, &c.buf_remote, &c.mr_remote, BUF_SZ,
+                      IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_WRITE))
+    {
+        err = 1;
+        goto cleanup;
+    }
     strcpy((char *)c.buf_remote, "server-initial");
     dump_mr(c.mr_remote, "server", c.buf_remote, BUF_SZ);
 
@@ -67,23 +88,43 @@ int main(int argc, char **argv)
     LOGF("SLOW", "register and post RECV buffer (notification-only)");
     void *rx_note = NULL;
     struct ibv_mr *mr_rx = NULL;
-    alloc_and_reg(&c, &rx_note, &mr_rx, 64, IBV_ACCESS_LOCAL_WRITE);
-    CHECK(post_recv(c.qp, mr_rx, rx_note, 64, 100), "post_recv");
+    if (alloc_and_reg(&c, &rx_note, &mr_rx, 64, IBV_ACCESS_LOCAL_WRITE))
+    {
+        err = 1;
+        goto cleanup;
+    }
+    if (post_recv(c.qp, mr_rx, rx_note, 64, 100))
+    {
+        err = 1;
+        goto cleanup;
+    }
 
     struct remote_buf_info info = pack_remote_buf_info((uintptr_t)c.buf_remote, c.mr_remote->rkey);
     LOGF("SLOW", "accept with private_data");
     LOGF("SLOW", "  addr=%#lx", (unsigned long)(uintptr_t)c.buf_remote);
     LOGF("SLOW", "  rkey=0x%x", c.mr_remote->rkey);
-    cm_server_accept_with_priv(&c, &info, sizeof(info));
+    if (cm_server_accept_with_priv(&c, &info, sizeof(info)))
+    {
+        err = 1;
+        goto cleanup;
+    }
 
     LOGF("SLOW", "wait ESTABLISHED");
-    CHECK(cm_wait_event(&c, RDMA_CM_EVENT_ESTABLISHED, &ev), "ESTABLISHED");
+    if (cm_wait_event(&c, RDMA_CM_EVENT_ESTABLISHED, &ev))
+    {
+        err = 1;
+        goto cleanup;
+    }
     rdma_ack_cm_event(ev);
     dump_qp(c.qp);
 
     LOGF("FAST", "wait for RECV (WRITE_WITH_IMM notification)");
     struct ibv_wc wc;
-    CHECK(poll_one(c.cq, &wc), "poll recv");
+    if (poll_one(c.cq, &wc))
+    {
+        err = 1;
+        goto cleanup;
+    }
     if (wc.opcode == IBV_WC_RECV_RDMA_WITH_IMM || (wc.wc_flags & IBV_WC_WITH_IMM))
     {
         LOGF("DATA", "got RECV with IMM");
@@ -100,6 +141,7 @@ int main(int argc, char **argv)
     rdma_disconnect(c.id);
 
     // Cleanup
+cleanup:
     if (mr_rx)
         ibv_dereg_mr(mr_rx);
     free(rx_note);
@@ -115,5 +157,5 @@ int main(int argc, char **argv)
     if (c.ec)
         rdma_destroy_event_channel(c.ec);
     LOG("Done");
-    return 0;
+    return err;
 }

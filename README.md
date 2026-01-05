@@ -87,6 +87,8 @@ Server VM:
 Client VM:
 
 ```bash
+# on server run the following:
+# ip -4 addr show enp0s1
 ./scripts/guide/04_run_client_write_read.sh <SERVER_IP> 7471
 ```
 
@@ -138,25 +140,35 @@ See [sims/README.md](sims/README.md) for the full list and mechanics guide.
 ### Lab 2: One-sided ops (WRITE + READ)
 
 - **What you’ll learn:** WRITE/READ behavior and how they map to CQEs.
-- **Try:** `./scripts/guide/03_run_server_write_read.sh` + `./scripts/guide/04_run_client_write_read.sh`
+- **Try (inside each VM):** run the server on one VM and the client on the other.
+  - Server VM: `./scripts/guide/03_run_server_write_read.sh 7471`
+  - Client VM: `./scripts/guide/04_run_client_write_read.sh <SERVER_IP> 7471`
 - **Observe:** ordering, CQ signaling, where CPU time is spent.
 
 ### Lab 3: Notifications (WRITE_WITH_IMM)
 
 - **What you’ll learn:** immediate data and receiver-side behavior.
-- **Try:** `./scripts/guide/05_run_server_write_imm.sh` + `./scripts/guide/06_run_client_write_imm.sh`
+- **Try (inside each VM):** run the server on one VM and the client on the other.
+  - Server VM: `./scripts/guide/05_run_server_write_imm.sh 7471`
+  - Client VM:`./scripts/guide/06_run_client_write_imm.sh <SERVER_IP> 7471`
 - **Observe:** RECV posting, notification semantics, CQ behavior.
 
 ### Lab 4: RDMA vs TCP
 
 - **What you’ll learn:** where RDMA saves cycles and where it can still stall.
-- **Try:** `examples/c/rdma-bulk/README.md` and `examples/c/tcp/README.md`
+- **Try (inside each VM):** build and run the RDMA and TCP bulk examples on separate VMs.
+  - RDMA server VM: `./rdma_bulk_server 7471 256K`
+  - RDMA client VM: `./rdma_bulk_client <SERVER_IP> 7471 256K 64K`
+  - TCP server VM: `./tcp_server 9000 256K`
+  - TCP client VM: `./tcp_client <SERVER_IP> 9000 256K`
 - **Observe:** chunking, signaling, throughput vs CPU cost.
 
 ### Lab 5: AI/ML mapping
 
 - **What you’ll learn:** how RDMA primitives map to training/serving paths.
-- **Try:** `examples/c/ai-ml/README.md`
+- **Try (inside each VM):** open `examples/c/ai-ml/README.md` and map each sketch to the minimal server/client on separate VMs.
+  - Server VM: `./scripts/guide/03_run_server_write_read.sh 7471`
+  - Client VM: `./scripts/guide/04_run_client_write_read.sh <SERVER_IP> 7471`
 - **Observe:** which constraints show up as “pipeline inefficiency.”
 
 ### Lab 6: Python introspection (Experimental / optional)

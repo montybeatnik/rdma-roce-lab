@@ -43,6 +43,7 @@
 
 int main(int argc, char **argv)
 {
+    int err = 0;
     if (argc < 3)
     {
         fprintf(stderr, "Usage: %s <server-ip> <port>\n", argv[0]);
@@ -62,26 +63,46 @@ int main(int argc, char **argv)
 
     rdma_ctx c = {0}; // initialize RDMA context to zero values.
     LOGF("SLOW", "create CM channel + ID");
-    cm_create_channel_and_id(&c);
+    if (cm_create_channel_and_id(&c))
+    {
+        err = 1;
+        goto cleanup;
+    }
     LOGF("SLOW", "resolve %s:%s", ip, port);
     LOGF("SLOW", "  src_ip=%s", src_ip ? src_ip : "default");
-    CHECK(cm_client_resolve(&c, ip, port, src_ip), "resolve");
+    if (cm_client_resolve(&c, ip, port, src_ip))
+    {
+        err = 1;
+        goto cleanup;
+    }
 
     // Build PD/CQ/QP **before** rdma_connect
     LOGF("SLOW", "build PD/CQ/QP");
-    build_pd_cq_qp(&c, IBV_QPT_RC, 64, 32, 32, 1);
+    if (build_pd_cq_qp(&c, IBV_QPT_RC, 64, 32, 32, 1))
+    {
+        err = 1;
+        goto cleanup;
+    }
 
     // Now connect (tiny credits for rxe)
     LOGF("SLOW", "rdma_connect");
     LOGF("SLOW", "  initiator_depth=%u", initiator_depth);
     LOGF("SLOW", "  responder_resources=%u", responder_resources);
-    CHECK(cm_client_connect_only(&c, initiator_depth, responder_resources), "rdma_connect");
+    if (cm_client_connect_only(&c, initiator_depth, responder_resources))
+    {
+        err = 1;
+        goto cleanup;
+    }
 
     // Wait for CONNECTED (handles CONNECT_RESPONSE -> ESTABLISHED, and returns
     // conn params)
     struct rdma_conn_param connp = {0};
     LOGF("SLOW", "wait ESTABLISHED");
-    CHECK(cm_wait_connected(&c, &connp), "ESTABLISHED");
+    if (cm_wait_connected(&c, &connp))
+    {
+        err = 1;
+        goto cleanup;
+    }
 
     // Extract private_data safely into a local struct
     struct remote_buf_info info = {0};
@@ -93,7 +114,8 @@ int main(int argc, char **argv)
     else
     {
         fprintf(stderr, "No or short private_data\n");
-        return 2;
+        err = 2;
+        goto cleanup;
     }
 
     unpack_remote_buf_info(&info, &c.remote_addr, &c.remote_rkey);
@@ -101,26 +123,50 @@ int main(int argc, char **argv)
     LOGF("SLOW", "remote rkey=0x%x", c.remote_rkey);
 
     LOGF("FAST", "register local TX/RX");
-    alloc_and_reg(&c, &c.buf_tx, &c.mr_tx, BUF_SZ, IBV_ACCESS_LOCAL_WRITE);
-    alloc_and_reg(&c, &c.buf_rx, &c.mr_rx, BUF_SZ, IBV_ACCESS_LOCAL_WRITE);
+    if (alloc_and_reg(&c, &c.buf_tx, &c.mr_tx, BUF_SZ, IBV_ACCESS_LOCAL_WRITE))
+    {
+        err = 1;
+        goto cleanup;
+    }
+    if (alloc_and_reg(&c, &c.buf_rx, &c.mr_rx, BUF_SZ, IBV_ACCESS_LOCAL_WRITE))
+    {
+        err = 1;
+        goto cleanup;
+    }
     strcpy((char *)c.buf_tx, "client-wrote-this");
 
     LOGF("DATA", "post RDMA_WRITE len=%zu", strlen((char *)c.buf_tx) + 1);
-    CHECK(post_write(c.qp, c.mr_tx, c.buf_tx, c.remote_addr, c.remote_rkey, strlen((char *)c.buf_tx) + 1, 1, 1),
-          "post_write");
+    if (post_write(c.qp, c.mr_tx, c.buf_tx, c.remote_addr, c.remote_rkey, strlen((char *)c.buf_tx) + 1, 1, 1))
+    {
+        err = 1;
+        goto cleanup;
+    }
     struct ibv_wc wc;
     LOGF("DATA", "poll RDMA_WRITE");
-    CHECK(poll_one(c.cq, &wc), "poll write");
+    if (poll_one(c.cq, &wc))
+    {
+        err = 1;
+        goto cleanup;
+    }
     LOGF("DATA", "RDMA_WRITE complete");
 
     LOGF("DATA", "post RDMA_READ len=%u", (unsigned)BUF_SZ);
-    CHECK(post_read(c.qp, c.mr_rx, c.buf_rx, c.remote_addr, c.remote_rkey, BUF_SZ, 2, 1), "post_read");
+    if (post_read(c.qp, c.mr_rx, c.buf_rx, c.remote_addr, c.remote_rkey, BUF_SZ, 2, 1))
+    {
+        err = 1;
+        goto cleanup;
+    }
     LOGF("DATA", "poll RDMA_READ");
-    CHECK(poll_one(c.cq, &wc), "poll read");
+    if (poll_one(c.cq, &wc))
+    {
+        err = 1;
+        goto cleanup;
+    }
     LOGF("DATA", "RDMA_READ complete: '%s'", (char *)c.buf_rx);
 
     rdma_disconnect(c.id);
 
+cleanup:
     mem_free_all(&c);
     if (c.qp)
         rdma_destroy_qp(c.id);
@@ -133,5 +179,5 @@ int main(int argc, char **argv)
     if (c.ec)
         rdma_destroy_event_channel(c.ec);
     LOG("Done");
-    return 0;
+    return err;
 }

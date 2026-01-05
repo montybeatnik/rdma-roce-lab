@@ -13,8 +13,6 @@
  *
  * Generated: 2025-09-02T09:13:19.457304Z
  */
-
-
 #include "rdma_mem.h"
 /**
  * alloc_and_reg(rdma_ctx *c, void **buf, struct ibv_mr **mr, size_t len,                   int access_flags)
@@ -30,16 +28,23 @@
  *   int (see return statements).
  */
 
-int alloc_and_reg(rdma_ctx *c, void **buf, struct ibv_mr **mr, size_t len,
-                  int access_flags) {
-  void *p = NULL;
-  CHECK(posix_memalign(&p, 4096, len), "posix_memalign");
-  memset(p, 0, len);
-  struct ibv_mr *m = /* Register app buffer with RNIC; pins pages & gets lkey/rkey */ ibv_reg_mr(c->pd, p, len, access_flags);
-  CHECK(!m, "ibv_reg_mr");
-  *buf = p;
-  *mr = m;
-  return 0;
+int alloc_and_reg(rdma_ctx *c, void **buf, struct ibv_mr **mr, size_t len, int access_flags)
+{
+    void *p = NULL;
+    int rc = posix_memalign(&p, 4096, len);
+    if (rc)
+    {
+        LOG_ERR("posix_memalign: %s", strerror(rc));
+        return -1;
+    }
+    memset(p, 0, len);
+    /* Register app buffer with RNIC; pins pages & gets lkey/rkey */
+    struct ibv_mr *m = ibv_reg_mr(c->pd, p, len, access_flags);
+    if (!m)
+        return err_errno("ibv_reg_mr");
+    *buf = p;
+    *mr = m;
+    return 0;
 }
 /**
  * mem_free_all(rdma_ctx *c)
@@ -51,10 +56,14 @@ int alloc_and_reg(rdma_ctx *c, void **buf, struct ibv_mr **mr, size_t len,
  *   void (see return statements).
  */
 
-void mem_free_all(rdma_ctx *c) {
-  if (c->mr_tx) ibv_dereg_mr(c->mr_tx);
-  if (c->mr_rx) ibv_dereg_mr(c->mr_rx);
-  if (c->mr_remote) ibv_dereg_mr(c->mr_remote);
-  free(c->buf_tx);
-  free(c->buf_rx); /* server owns buf_remote */
+void mem_free_all(rdma_ctx *c)
+{
+    if (c->mr_tx)
+        ibv_dereg_mr(c->mr_tx);
+    if (c->mr_rx)
+        ibv_dereg_mr(c->mr_rx);
+    if (c->mr_remote)
+        ibv_dereg_mr(c->mr_remote);
+    free(c->buf_tx);
+    free(c->buf_rx); /* server owns buf_remote */
 }
