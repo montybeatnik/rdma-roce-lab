@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Lab 3: WRITE_WITH_IMM</title>
+  <link rel="stylesheet" href="shared.css" />
+</head>
+<body>
+  <div class="wrap">
+    <h1>Lab 3: WRITE_WITH_IMM Notifications</h1>
+    <p class="sub">
+      WRITE_WITH_IMM delivers data to remote memory and sends a small immediate value to the receiver's CQ.
+      The receiver must post a RECV to observe the notification.
+    </p>
+
+    <div class="grid">
+      <div class="card">
+        <div class="canvasWrap">
+          <canvas id="c"></canvas>
+        </div>
+      </div>
+
+      <div class="card controls">
+        <div class="ctl">
+          <label><span>Imm Data</span><strong><span id="immVal">42</span></strong></label>
+          <input id="immData" type="range" min="1" max="255" step="1" value="42" />
+        </div>
+
+        <div class="ctl">
+          <label><span>Post RECV</span><span class="pill" id="recvLabel">Yes</span></label>
+          <div class="tog">
+            <div class="btn primary" id="recvOn">RECV On</div>
+            <div class="btn" id="recvOff">RECV Off</div>
+          </div>
+          <div class="note">If RECV is not posted, the notification is missed.</div>
+        </div>
+
+        <div class="ctl">
+          <label><span>Speed</span><strong><span id="speedVal">1.0x</span></strong></label>
+          <input id="speed" type="range" min="0.4" max="2.0" step="0.1" value="1.0" />
+        </div>
+
+        <div class="ctl">
+          <div class="tog">
+            <div class="btn primary" id="toggleRun">Pause</div>
+            <div class="btn danger" id="reset">Reset</div>
+          </div>
+          <div class="kv">
+            <span>Writes</span><strong><span id="writes">0</span></strong>
+            <span>Notifications</span><strong><span id="notifs">0</span></strong>
+            <span>Missed</span><strong><span id="missed">0</span></strong>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script src="shared.js"></script>
+<script>
+(() => {
+  const { ctx } = SimUI.setupCanvas('c');
+
+  const el = {
+    immData: document.getElementById('immData'),
+    immVal: document.getElementById('immVal'),
+    recvOn: document.getElementById('recvOn'),
+    recvOff: document.getElementById('recvOff'),
+    recvLabel: document.getElementById('recvLabel'),
+    speed: document.getElementById('speed'),
+    speedVal: document.getElementById('speedVal'),
+    toggleRun: document.getElementById('toggleRun'),
+    reset: document.getElementById('reset'),
+    writes: document.getElementById('writes'),
+    notifs: document.getElementById('notifs'),
+    missed: document.getElementById('missed'),
+  };
+
+  const bindRange = SimUI.bindRange;
+  bindRange(el.immData, el.immVal, v => v);
+  bindRange(el.speed, el.speedVal, v => `${Number(v).toFixed(1)}x`);
+
+  let running = true;
+  let recvPosted = true;
+  let ops = [];
+  let stats = { writes: 0, notifs: 0, missed: 0 };
+  let flash = 0;
+
+  function setRecv(on) {
+    recvPosted = on;
+    el.recvLabel.textContent = on ? 'Yes' : 'No';
+    el.recvOn.classList.toggle('primary', on);
+    el.recvOff.classList.toggle('primary', !on);
+  }
+
+  el.recvOn.onclick = () => setRecv(true);
+  el.recvOff.onclick = () => setRecv(false);
+
+  el.reset.onclick = () => {
+    ops = [];
+    stats = { writes: 0, notifs: 0, missed: 0 };
+    flash = 0;
+  };
+
+  el.toggleRun.onclick = () => {
+    running = !running;
+    el.toggleRun.textContent = running ? 'Pause' : 'Play';
+  };
+
+  function enqueue() {
+    ops.push({ progress: 0 });
+    stats.writes += 1;
+  }
+
+  function tick() {
+    if (running) {
+      const speed = Number(el.speed.value);
+      if (Math.random() < 0.04 * speed) enqueue();
+
+      ops.forEach(op => {
+        op.progress += 0.02 * speed;
+      });
+
+      const completed = ops.filter(op => op.progress >= 1);
+      ops = ops.filter(op => op.progress < 1);
+
+      completed.forEach(() => {
+        if (recvPosted) {
+          stats.notifs += 1;
+          flash = 20;
+        } else {
+          stats.missed += 1;
+          flash = -20;
+        }
+      });
+    }
+
+    const w = ctx.canvas.width / (window.devicePixelRatio || 1);
+    const h = ctx.canvas.height / (window.devicePixelRatio || 1);
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = '#0d1117';
+    ctx.fillRect(0, 0, w, h);
+
+    const leftX = 70;
+    const rightX = w - 70;
+    const midY = h / 2;
+
+    ctx.fillStyle = '#1f2937';
+    ctx.fillRect(leftX - 20, midY - 80, 140, 160);
+    ctx.fillRect(rightX - 120, midY - 80, 140, 160);
+
+    ctx.fillStyle = '#e8eef7';
+    ctx.font = '12px system-ui, sans-serif';
+    ctx.fillText('Client', leftX + 10, midY - 90);
+    ctx.fillText('Server', rightX - 88, midY - 90);
+
+    ctx.fillStyle = '#111827';
+    ctx.fillRect(leftX - 6, midY - 30, 100, 60);
+    ctx.fillRect(rightX - 106, midY - 30, 100, 60);
+    ctx.fillStyle = '#a7b3c5';
+    ctx.fillText('Data', leftX + 28, midY + 6);
+    ctx.fillText('Buffer', rightX - 88, midY + 6);
+
+    ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+    ctx.beginPath();
+    ctx.moveTo(leftX + 100, midY);
+    ctx.lineTo(rightX - 110, midY);
+    ctx.stroke();
+
+    ops.forEach(op => {
+      const x = leftX + 100 + (rightX - leftX - 210) * op.progress;
+      ctx.fillStyle = '#4da3ff';
+      ctx.fillRect(x - 6, midY - 6, 12, 12);
+    });
+
+    const cqX = rightX - 110;
+    const cqY = midY + 70;
+    ctx.fillStyle = 'rgba(255,255,255,0.05)';
+    ctx.fillRect(cqX - 30, cqY, 140, 60);
+    ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+    ctx.strokeRect(cqX - 30, cqY, 140, 60);
+    ctx.fillStyle = '#e8eef7';
+    ctx.fillText('CQ (RECV)', cqX - 6, cqY + 18);
+    ctx.fillStyle = '#a7b3c5';
+    ctx.fillText(`imm_data=${el.immData.value}`, cqX - 10, cqY + 40);
+
+    if (flash !== 0) {
+      const ok = flash > 0;
+      ctx.fillStyle = ok ? 'rgba(110,231,183,0.2)' : 'rgba(255,92,92,0.2)';
+      ctx.fillRect(leftX, 20, rightX - leftX, 28);
+      ctx.fillStyle = ok ? '#6ee7b7' : '#ffb4b4';
+      ctx.font = '13px system-ui, sans-serif';
+      ctx.fillText(ok ? 'RECV completion: imm_data delivered' : 'No RECV posted: notification missed', leftX + 12, 40);
+      flash += ok ? -1 : 1;
+    }
+
+    el.writes.textContent = stats.writes;
+    el.notifs.textContent = stats.notifs;
+    el.missed.textContent = stats.missed;
+
+    requestAnimationFrame(tick);
+  }
+
+  setRecv(true);
+  requestAnimationFrame(tick);
+})();
+</script>
+</body>
+</html>

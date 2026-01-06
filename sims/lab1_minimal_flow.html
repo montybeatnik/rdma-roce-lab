@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Lab 1: Minimal RDMA Flow</title>
+  <link rel="stylesheet" href="shared.css" />
+</head>
+<body>
+  <div class="wrap">
+    <h1>Lab 1: Minimal RDMA Flow</h1>
+    <p class="sub">
+      A step-by-step view of the minimal client/server flow: CM resolve → QP setup → metadata exchange → WRITE/READ → CQE.
+    </p>
+
+    <div class="grid">
+      <div class="card">
+        <div class="canvasWrap">
+          <canvas id="c"></canvas>
+        </div>
+      </div>
+
+      <div class="card controls">
+        <div class="ctl">
+          <label><span>Speed</span><strong><span id="speedVal">1.0x</span></strong></label>
+          <input id="speed" type="range" min="0.4" max="2.0" step="0.1" value="1.0" />
+        </div>
+
+        <div class="ctl">
+          <label><span>Auto-Run</span><span class="pill" id="autoLabel">On</span></label>
+          <div class="tog">
+            <div class="btn primary" id="autoOn">Auto</div>
+            <div class="btn" id="autoOff">Step</div>
+            <div class="btn" id="nextStep">Next Step</div>
+          </div>
+          <div class="note">Use Step mode to narrate each stage clearly.</div>
+        </div>
+
+        <div class="ctl">
+          <div class="tog">
+            <div class="btn primary" id="toggleRun">Pause</div>
+            <div class="btn danger" id="reset">Reset</div>
+          </div>
+          <div class="kv">
+            <span>Stage</span><strong><span id="stageName">CM Resolve</span></strong>
+            <span>Side</span><strong><span id="sideName">Client</span></strong>
+            <span>Step</span><strong><span id="stepIdx">1/9</span></strong>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script src="shared.js"></script>
+<script>
+(() => {
+  const { ctx } = SimUI.setupCanvas('c');
+
+  const el = {
+    speed: document.getElementById('speed'),
+    speedVal: document.getElementById('speedVal'),
+    autoOn: document.getElementById('autoOn'),
+    autoOff: document.getElementById('autoOff'),
+    autoLabel: document.getElementById('autoLabel'),
+    nextStep: document.getElementById('nextStep'),
+    toggleRun: document.getElementById('toggleRun'),
+    reset: document.getElementById('reset'),
+    stageName: document.getElementById('stageName'),
+    sideName: document.getElementById('sideName'),
+    stepIdx: document.getElementById('stepIdx'),
+  };
+
+  const bindRange = SimUI.bindRange;
+  bindRange(el.speed, el.speedVal, v => `${Number(v).toFixed(1)}x`);
+
+  const steps = [
+    { name: 'CM Resolve', side: 'Client', detail: 'Resolve server IP/port' },
+    { name: 'Route Resolve', side: 'Client', detail: 'Find path + device' },
+    { name: 'PD/CQ/QP', side: 'Client', detail: 'Create verbs objects' },
+    { name: 'Listen', side: 'Server', detail: 'Bind + listen' },
+    { name: 'Connect', side: 'Both', detail: 'rdma_connect / accept' },
+    { name: 'Private Data', side: 'Both', detail: 'addr + rkey exchange' },
+    { name: 'RDMA WRITE', side: 'Client', detail: 'Write to remote buffer' },
+    { name: 'RDMA READ', side: 'Client', detail: 'Read back for verify' },
+    { name: 'CQE', side: 'Both', detail: 'Completions observed' },
+  ];
+
+  let running = true;
+  let auto = true;
+  let step = 0;
+  let t = 0;
+
+  function setAuto(on) {
+    auto = on;
+    el.autoLabel.textContent = on ? 'On' : 'Off';
+    el.autoOn.classList.toggle('primary', on);
+    el.autoOff.classList.toggle('primary', !on);
+  }
+
+  el.autoOn.onclick = () => setAuto(true);
+  el.autoOff.onclick = () => setAuto(false);
+  el.nextStep.onclick = () => {
+    if (step < steps.length - 1) step += 1;
+    t = 0;
+  };
+
+  el.toggleRun.onclick = () => {
+    running = !running;
+    el.toggleRun.textContent = running ? 'Pause' : 'Play';
+  };
+
+  el.reset.onclick = () => {
+    step = 0;
+    t = 0;
+    running = true;
+    el.toggleRun.textContent = 'Pause';
+  };
+
+  function tick() {
+    if (running) {
+      const speed = Number(el.speed.value);
+      t += 0.016 * speed;
+      if (auto && t > 1.6) {
+        if (step < steps.length - 1) {
+          step += 1;
+          t = 0;
+        } else {
+          t = 1.6;
+        }
+      }
+    }
+
+    const w = ctx.canvas.width / (window.devicePixelRatio || 1);
+    const h = ctx.canvas.height / (window.devicePixelRatio || 1);
+    ctx.clearRect(0, 0, w, h);
+
+    ctx.fillStyle = '#0d1117';
+    ctx.fillRect(0, 0, w, h);
+
+    const leftX = 60;
+    const rightX = w - 60;
+    const midY = h / 2;
+    const topY = 80;
+    const gapY = 70;
+
+    ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(leftX, topY);
+    ctx.lineTo(leftX, topY + gapY * 4);
+    ctx.moveTo(rightX, topY);
+    ctx.lineTo(rightX, topY + gapY * 4);
+    ctx.stroke();
+
+    ctx.fillStyle = '#e8eef7';
+    ctx.font = '13px system-ui, sans-serif';
+    ctx.fillText('Client', leftX - 20, topY - 20);
+    ctx.fillText('Server', rightX - 24, topY - 20);
+
+    steps.forEach((s, i) => {
+      const y = topY + i * (gapY * 0.45);
+      const active = i === step;
+      ctx.fillStyle = active ? '#4da3ff' : 'rgba(255,255,255,0.1)';
+      ctx.fillRect(leftX - 8, y, rightX - leftX + 16, 24);
+      ctx.fillStyle = active ? '#0b0d10' : '#a7b3c5';
+      ctx.font = active ? '12px system-ui, sans-serif' : '11px system-ui, sans-serif';
+      ctx.fillText(`${i + 1}. ${s.name}`, leftX + 8, y + 16);
+    });
+
+    const cur = steps[step];
+    el.stageName.textContent = cur.name;
+    el.sideName.textContent = cur.side;
+    el.stepIdx.textContent = `${step + 1}/${steps.length}`;
+
+    const boxW = w - 120;
+    const boxH = 90;
+    const boxX = 60;
+    const boxY = h - 140;
+    ctx.fillStyle = 'rgba(255,255,255,0.05)';
+    ctx.fillRect(boxX, boxY, boxW, boxH);
+    ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+    ctx.strokeRect(boxX, boxY, boxW, boxH);
+
+    ctx.fillStyle = '#e8eef7';
+    ctx.font = '13px system-ui, sans-serif';
+    ctx.fillText(`Now: ${cur.detail}`, boxX + 16, boxY + 26);
+    ctx.fillStyle = '#a7b3c5';
+    ctx.font = '12px system-ui, sans-serif';
+    ctx.fillText('Tip: pause and step to narrate each transition.', boxX + 16, boxY + 52);
+
+    const prog = Math.min(1, t / 1.6);
+    const lineY = boxY - 20;
+    ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+    ctx.beginPath();
+    ctx.moveTo(boxX, lineY);
+    ctx.lineTo(boxX + boxW, lineY);
+    ctx.stroke();
+    ctx.fillStyle = '#4da3ff';
+    ctx.fillRect(boxX, lineY - 2, boxW * prog, 4);
+
+    requestAnimationFrame(tick);
+  }
+
+  setAuto(true);
+  requestAnimationFrame(tick);
+})();
+</script>
+</body>
+</html>

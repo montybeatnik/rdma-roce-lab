@@ -44,4 +44,4 @@ This repo focuses on low-level RDMA building blocks. The scenarios below show wh
 
 ## Navigation
 - Previous: [Lab setup](lab-setup.md)
-- Next: [Testing](testing.md)
+- Next: [Lab 7 netem](lab-7-netem.md)

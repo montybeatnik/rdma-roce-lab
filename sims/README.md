@@ -15,6 +15,13 @@ Open: [MECHANICS.md](MECHANICS.md)
 
 ## Learning order (start here)
 
+0) Lab-focused sims:
+   - `lab1_minimal_flow.html` — minimal CM/QP/WR flow.
+   - `lab2_one_sided_ops.html` — WRITE/READ and CQ signaling.
+   - `lab3_write_with_imm.html` — notification flow with imm_data.
+   - `lab4_rdma_vs_tcp.html` — bulk transfer cost comparison.
+   - `lab5_ai_ml_mapping.html` — RDMA verbs mapped to AI/ML patterns.
+
 1) `average_vs_spikes.html` — averages hide microbursts.
    - Try: spike probability 0.08, baseline 0.25, window 6s.
    - Try: spike probability 0.18, baseline 0.20, window 3s.

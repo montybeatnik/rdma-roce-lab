@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Lab 5: AI/ML RDMA Mapping</title>
+  <link rel="stylesheet" href="shared.css" />
+</head>
+<body>
+  <div class="wrap">
+    <h1>Lab 5: AI/ML RDMA Mapping</h1>
+    <p class="sub">
+      RDMA primitives map directly to common AI/ML patterns. Select a workload to see which verbs matter.
+    </p>
+
+    <div class="grid">
+      <div class="card">
+        <div class="canvasWrap">
+          <canvas id="c"></canvas>
+        </div>
+      </div>
+
+      <div class="card controls">
+        <div class="ctl">
+          <label><span>Pattern</span><span class="pill" id="modeLabel">Parameter Server</span></label>
+          <div class="tog">
+            <div class="btn primary" id="modeA">Param Server</div>
+            <div class="btn" id="modeB">Embedding Cache</div>
+            <div class="btn" id="modeC">Inference Queue</div>
+            <div class="btn" id="modeD">Watermark</div>
+          </div>
+        </div>
+
+        <div class="ctl">
+          <label><span>Update Rate</span><strong><span id="rateVal">1.0x</span></strong></label>
+          <input id="rate" type="range" min="0.4" max="2.0" step="0.1" value="1.0" />
+        </div>
+
+        <div class="ctl">
+          <div class="tog">
+            <div class="btn primary" id="toggleRun">Pause</div>
+            <div class="btn danger" id="reset">Reset</div>
+          </div>
+          <div class="kv">
+            <span>WRITE</span><strong><span id="wCnt">0</span></strong>
+            <span>READ</span><strong><span id="rCnt">0</span></strong>
+            <span>IMM</span><strong><span id="iCnt">0</span></strong>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script src="shared.js"></script>
+<script>
+(() => {
+  const { ctx } = SimUI.setupCanvas('c');
+
+  const el = {
+    modeLabel: document.getElementById('modeLabel'),
+    modeA: document.getElementById('modeA'),
+    modeB: document.getElementById('modeB'),
+    modeC: document.getElementById('modeC'),
+    modeD: document.getElementById('modeD'),
+    rate: document.getElementById('rate'),
+    rateVal: document.getElementById('rateVal'),
+    toggleRun: document.getElementById('toggleRun'),
+    reset: document.getElementById('reset'),
+    wCnt: document.getElementById('wCnt'),
+    rCnt: document.getElementById('rCnt'),
+    iCnt: document.getElementById('iCnt'),
+  };
+
+  const bindRange = SimUI.bindRange;
+  bindRange(el.rate, el.rateVal, v => `${Number(v).toFixed(1)}x`);
+
+  const modes = {
+    A: { name: 'Parameter Server', verbs: ['WRITE', 'READ'], note: 'Workers push gradients, pull weights.' },
+    B: { name: 'Embedding Cache', verbs: ['WRITE', 'IMM'], note: 'Write updated vector, IMM signals invalidation.' },
+    C: { name: 'Inference Queue', verbs: ['WRITE', 'IMM'], note: 'Write batch payload, IMM notifies queue head.' },
+    D: { name: 'Watermark', verbs: ['WRITE', 'IMM'], note: 'Stream data, IMM carries watermark epoch.' },
+  };
+
+  let mode = 'A';
+  let running = true;
+  let ops = [];
+  let stats = { w: 0, r: 0, i: 0 };
+
+  function setMode(m) {
+    mode = m;
+    el.modeLabel.textContent = modes[m].name;
+    el.modeA.classList.toggle('primary', m === 'A');
+    el.modeB.classList.toggle('primary', m === 'B');
+    el.modeC.classList.toggle('primary', m === 'C');
+    el.modeD.classList.toggle('primary', m === 'D');
+    ops = [];
+  }
+
+  el.modeA.onclick = () => setMode('A');
+  el.modeB.onclick = () => setMode('B');
+  el.modeC.onclick = () => setMode('C');
+  el.modeD.onclick = () => setMode('D');
+
+  el.toggleRun.onclick = () => {
+    running = !running;
+    el.toggleRun.textContent = running ? 'Pause' : 'Play';
+  };
+
+  el.reset.onclick = () => {
+    ops = [];
+    stats = { w: 0, r: 0, i: 0 };
+  };
+
+  function enqueue(kind) {
+    ops.push({ kind, progress: 0 });
+    if (kind === 'W') stats.w += 1;
+    if (kind === 'R') stats.r += 1;
+    if (kind === 'I') stats.i += 1;
+  }
+
+  function tick() {
+    if (running) {
+      const rate = Number(el.rate.value);
+      if (Math.random() < 0.05 * rate) {
+        const v = modes[mode].verbs;
+        const pick = v[Math.floor(Math.random() * v.length)];
+        enqueue(pick[0]);
+      }
+      ops.forEach(op => { op.progress += 0.02 * rate; });
+      ops = ops.filter(op => op.progress < 1);
+    }
+
+    const w = ctx.canvas.width / (window.devicePixelRatio || 1);
+    const h = ctx.canvas.height / (window.devicePixelRatio || 1);
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = '#0d1117';
+    ctx.fillRect(0, 0, w, h);
+
+    const leftX = 70;
+    const rightX = w - 70;
+    const midY = h / 2;
+
+    ctx.fillStyle = '#1f2937';
+    ctx.fillRect(leftX - 20, midY - 90, 140, 180);
+    ctx.fillRect(rightX - 120, midY - 90, 140, 180);
+
+    ctx.fillStyle = '#e8eef7';
+    ctx.font = '12px system-ui, sans-serif';
+    ctx.fillText('Client/Worker', leftX - 2, midY - 100);
+    ctx.fillText('Server/Store', rightX - 98, midY - 100);
+
+    ctx.fillStyle = '#111827';
+    ctx.fillRect(leftX - 6, midY - 40, 100, 80);
+    ctx.fillRect(rightX - 106, midY - 40, 100, 80);
+    ctx.fillStyle = '#a7b3c5';
+    ctx.fillText('Buffers', leftX + 18, midY + 4);
+    ctx.fillText('Buffers', rightX - 90, midY + 4);
+
+    ops.forEach(op => {
+      const x = leftX + 100 + (rightX - leftX - 210) * op.progress;
+      const y = midY + (op.kind === 'R' ? -16 : 16);
+      const color = op.kind === 'W' ? '#4da3ff' : op.kind === 'R' ? '#6ee7b7' : '#ffb020';
+      ctx.fillStyle = color;
+      ctx.fillRect(x - 6, y - 6, 12, 12);
+    });
+
+    ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+    ctx.beginPath();
+    ctx.moveTo(leftX + 100, midY - 16);
+    ctx.lineTo(rightX - 110, midY - 16);
+    ctx.moveTo(leftX + 100, midY + 16);
+    ctx.lineTo(rightX - 110, midY + 16);
+    ctx.stroke();
+
+    ctx.fillStyle = '#a7b3c5';
+    ctx.font = '12px system-ui, sans-serif';
+    ctx.fillText(modes[mode].note, leftX, h - 40);
+
+    el.wCnt.textContent = stats.w;
+    el.rCnt.textContent = stats.r;
+    el.iCnt.textContent = stats.i;
+
+    requestAnimationFrame(tick);
+  }
+
+  setMode('A');
+  requestAnimationFrame(tick);
+})();
+</script>
+</body>
+</html>

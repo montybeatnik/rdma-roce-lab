@@ -52,6 +52,12 @@
         </div>
 
         <div class="ctl">
+          <label><span>Sim Speed</span><strong><span id="speedVal">0.7x</span></strong></label>
+          <input id="simSpeed" type="range" min="0.3" max="1.6" step="0.1" value="0.7" />
+          <div class="note">Lower = slower and easier to read.</div>
+        </div>
+
+        <div class="ctl">
           <div class="tog">
             <div class="btn primary" id="toggleRun">Pause</div>
             <div class="btn danger" id="reset">Reset</div>
@@ -81,10 +87,12 @@
     lossBurst: document.getElementById('lossBurst'),
     windowSize: document.getElementById('windowSize'),
     timeout: document.getElementById('timeout'),
+    simSpeed: document.getElementById('simSpeed'),
     lossVal: document.getElementById('lossVal'),
     burstVal: document.getElementById('burstVal'),
     winVal: document.getElementById('winVal'),
     toVal: document.getElementById('toVal'),
+    speedVal: document.getElementById('speedVal'),
     toggleRun: document.getElementById('toggleRun'),
     reset: document.getElementById('reset'),
     sent: document.getElementById('sent'),
@@ -98,6 +106,7 @@
   bindRange(el.lossBurst, el.burstVal, v => v);
   bindRange(el.windowSize, el.winVal, v => v);
   bindRange(el.timeout, el.toVal, v => v);
+  bindRange(el.simSpeed, el.speedVal, v => `${Number(v).toFixed(1)}x`);
 
   let running = true;
   let mode = 'gbn';
@@ -113,6 +122,8 @@
   let timeoutTimer = 0;
 
   let stats = { sent: 0, acked: 0, retrans: 0 };
+  let lastEvent = '';
+  let lastEventTtl = 0;
 
   function setMode(m) {
     mode = m;
@@ -134,6 +145,8 @@
     recoverFrom = null;
     timeoutTimer = 0;
     stats = { sent: 0, acked: 0, retrans: 0 };
+    lastEvent = '';
+    lastEventTtl = 0;
   }
 
   el.reset.onclick = reset;
@@ -170,6 +183,8 @@
     const lossProb = Number(el.lossProb.value) / 100;
     const windowSize = Number(el.windowSize.value);
     const timeoutMs = Number(el.timeout.value);
+    const speed = Number(el.simSpeed.value);
+    const dt = 16 * speed;
 
     while (inflight.length < windowSize && recoverFrom === null) {
       sendPacket(nextSeq, false);
@@ -179,7 +194,7 @@
     if (mode === 'sel' && pendingRetrans.length) {
       for (let i = pendingRetrans.length - 1; i >= 0; i--) {
         const p = pendingRetrans[i];
-        p.timer -= 16;
+        p.timer -= dt;
         if (p.timer <= 0) {
           if (!ackedSet.has(p.seq)) {
             sendPacket(p.seq, true);
@@ -190,7 +205,7 @@
     }
 
     for (const pkt of inflight) {
-      pkt.progress += 0.012;
+      pkt.progress += 0.012 * speed;
     }
 
     const arrived = inflight.filter(p => p.progress >= 1);
@@ -203,9 +218,13 @@
           if (recoverFrom === null || pkt.seq < recoverFrom) {
             recoverFrom = pkt.seq;
             timeoutTimer = timeoutMs;
+            lastEvent = `Loss at seq ${pkt.seq}. RC will retry from here.`;
+            lastEventTtl = 2200;
           }
         } else {
           pendingRetrans.push({ seq: pkt.seq, timer: timeoutMs });
+          lastEvent = `Loss at seq ${pkt.seq}. Selective retry scheduled.`;
+          lastEventTtl = 1800;
         }
       } else {
         if (mode === 'gbn') {
@@ -232,10 +251,12 @@
     }
 
     if (recoverFrom !== null) {
-      timeoutTimer -= 16;
+      timeoutTimer -= dt;
       if (timeoutTimer <= 0) {
         inflight = inflight.filter(p => p.seq < recoverFrom);
         nextSeq = recoverFrom;
+        lastEvent = `Timeout fired. Retransmitting from seq ${recoverFrom}.`;
+        lastEventTtl = 2000;
         recoverFrom = null;
       }
     }
@@ -276,14 +297,37 @@
       ctx.fillRect(x - 4, laneY - 6, 8, 12);
     }
 
+    if (lastEventTtl > 0) {
+      ctx.fillStyle = 'rgba(255,92,92,0.16)';
+      ctx.strokeStyle = 'rgba(255,92,92,0.5)';
+      ctx.lineWidth = 1;
+      ctx.fillRect(leftX, laneY + 42, rightX - leftX, 32);
+      ctx.strokeRect(leftX, laneY + 42, rightX - leftX, 32);
+      ctx.fillStyle = '#ffb4b4';
+      ctx.font = '13px system-ui, sans-serif';
+      ctx.fillText(lastEvent, leftX + 10, laneY + 63);
+      lastEventTtl -= dt;
+    }
+
     if (recoverFrom !== null) {
       ctx.fillStyle = '#ff5c5c';
-      ctx.fillText(`Loss detected at seq ${recoverFrom}`, leftX, laneY + 30);
+      ctx.fillText(`Recovering from seq ${recoverFrom}`, leftX, laneY + 30);
     }
 
     ctx.fillStyle = '#a7b3c5';
-    ctx.fillText(`Base ACK: ${baseAck}`, leftX, laneY + 52);
-    ctx.fillText(`In-flight: ${inflight.length}`, leftX + 120, laneY + 52);
+    ctx.fillText(`Base ACK: ${baseAck}`, leftX, laneY + 92);
+    ctx.fillText(`In-flight: ${inflight.length}`, leftX + 120, laneY + 92);
+
+    const goodput = stats.sent ? stats.acked / stats.sent : 1;
+    const barY = laneY + 110;
+    const barW = rightX - leftX;
+    ctx.fillStyle = 'rgba(255,255,255,0.08)';
+    ctx.fillRect(leftX, barY, barW, 12);
+    ctx.fillStyle = '#6ee7b7';
+    ctx.fillRect(leftX, barY, barW * goodput, 12);
+    ctx.fillStyle = '#a7b3c5';
+    ctx.font = '12px system-ui, sans-serif';
+    ctx.fillText(`Job goodput: ${(goodput * 100).toFixed(0)}%`, leftX, barY + 26);
 
     requestAnimationFrame(tick);
   }

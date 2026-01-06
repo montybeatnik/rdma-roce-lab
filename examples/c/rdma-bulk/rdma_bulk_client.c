@@ -42,6 +42,13 @@ static double elapsed_sec(const struct timespec *start, const struct timespec *e
     return s + ns;
 }
 
+static double now_sec(void)
+{
+    struct timespec t;
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    return (double)t.tv_sec + (double)t.tv_nsec / 1e9;
+}
+
 int main(int argc, char **argv)
 {
     int err = 0;
@@ -54,6 +61,10 @@ int main(int argc, char **argv)
     const char *port = argv[2];
     const char *size_str = (argc >= 4) ? argv[3] : "1G";
     const char *chunk_str = (argc >= 5) ? argv[4] : "4M";
+    const char *log_env = getenv("RDMA_BULK_LOG");
+    const char *csv_env = getenv("RDMA_BULK_CSV");
+    int log_on = (log_env && *log_env) || (csv_env && *csv_env);
+    FILE *csv = NULL;
     uint64_t total = parse_size_bytes(size_str);
     uint64_t chunk = parse_size_bytes(chunk_str);
     if (total == 0 || chunk == 0)
@@ -123,12 +134,29 @@ int main(int argc, char **argv)
     const int max_outstanding = 64;
     const int signal_every = 16;
     int inflight = 0;
+    uint64_t completed = 0;
     int current_batch = 0;
     int batch_sizes[1024];
     int batch_head = 0;
     int batch_tail = 0;
     uint64_t sent = 0;
     uint64_t wr_id = 1;
+    double last_log = now_sec();
+    double last_cqe = last_log;
+    double start_log = last_log;
+    int csv_rows = 0;
+    if (csv_env && *csv_env)
+    {
+        csv = fopen(csv_env, "w");
+        if (!csv)
+        {
+            LOG_ERR("failed to open CSV: %s", csv_env);
+        }
+        else
+        {
+            fprintf(csv, "time_s,sent_mib,inflight,completed,cqe_gap_s\n");
+        }
+    }
     while (sent < total)
     {
         uint64_t remaining = total - sent;
@@ -157,9 +185,34 @@ int main(int argc, char **argv)
                 goto cleanup;
             }
             inflight -= batch_sizes[batch_head];
+            completed += (uint64_t)batch_sizes[batch_head];
             batch_head = (batch_head + 1) % (int)(sizeof(batch_sizes) / sizeof(batch_sizes[0]));
+            last_cqe = now_sec();
         }
         sent += this_chunk;
+
+        if (log_on)
+        {
+            double now = now_sec();
+            if (now - last_log >= 1.0)
+            {
+                double mib = (double)sent / (1024.0 * 1024.0);
+                LOGF("DATA", "progress sent=%" PRIu64 "B (%.2f MiB) inflight=%d completed=%" PRIu64,
+                     sent, mib, inflight, completed);
+                if (now - last_cqe > 2.0)
+                {
+                    LOGF("DATA", "no CQE for %.1fs (likely retries/backoff)", now - last_cqe);
+                }
+                if (csv)
+                {
+                    fprintf(csv, "%.2f,%.3f,%d,%" PRIu64 ",%.2f\n",
+                            now - start_log, mib, inflight, completed, now - last_cqe);
+                    fflush(csv);
+                    csv_rows++;
+                }
+                last_log = now;
+            }
+        }
     }
     while (batch_head != batch_tail)
     {
@@ -170,7 +223,9 @@ int main(int argc, char **argv)
             goto cleanup;
         }
         inflight -= batch_sizes[batch_head];
+        completed += (uint64_t)batch_sizes[batch_head];
         batch_head = (batch_head + 1) % (int)(sizeof(batch_sizes) / sizeof(batch_sizes[0]));
+        last_cqe = now_sec();
     }
     clock_gettime(CLOCK_MONOTONIC, &t1);
 
@@ -181,6 +236,16 @@ int main(int argc, char **argv)
     rdma_disconnect(c.id);
 
 cleanup:
+    if (csv)
+    {
+        if (csv_rows == 0)
+        {
+            double now = now_sec();
+            fprintf(csv, "%.2f,%.3f,%d,%" PRIu64 ",%.2f\n",
+                    now - start_log, mib, inflight, completed, now - last_cqe);
+        }
+        fclose(csv);
+    }
     mem_free_all(&c);
     if (c.qp)
         rdma_destroy_qp(c.id);

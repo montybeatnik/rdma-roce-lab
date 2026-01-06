@@ -1,0 +1,1 @@
+tests/test_run_integration.sh: line 31: ./rdma_client: No such file or directory

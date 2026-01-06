@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Lab 4: RDMA vs TCP</title>
+  <link rel="stylesheet" href="shared.css" />
+</head>
+<body>
+  <div class="wrap">
+    <h1>Lab 4: RDMA vs TCP (Bulk Transfer)</h1>
+    <p class="sub">
+      Compare bulk transfer cost: TCP copies and kernel work vs RDMA DMA + CQ polling. Chunking and signaling
+      shape throughput and CPU.
+    </p>
+
+    <div class="grid">
+      <div class="card">
+        <div class="canvasWrap">
+          <canvas id="c"></canvas>
+        </div>
+      </div>
+
+      <div class="card controls">
+        <div class="ctl">
+          <label><span>Total Size (KB)</span><strong><span id="totalVal">256</span></strong></label>
+          <input id="totalSize" type="range" min="64" max="1024" step="32" value="256" />
+        </div>
+
+        <div class="ctl">
+          <label><span>Chunk Size (KB)</span><strong><span id="chunkVal">64</span></strong></label>
+          <input id="chunkSize" type="range" min="8" max="256" step="8" value="64" />
+        </div>
+
+        <div class="ctl">
+          <label><span>Signal Every (chunks)</span><strong><span id="sigVal">4</span></strong></label>
+          <input id="signalEvery" type="range" min="1" max="16" step="1" value="4" />
+        </div>
+
+        <div class="ctl">
+          <label><span>Speed</span><strong><span id="speedVal">1.0x</span></strong></label>
+          <input id="speed" type="range" min="0.4" max="2.0" step="0.1" value="1.0" />
+        </div>
+
+        <div class="ctl">
+          <div class="tog">
+            <div class="btn primary" id="toggleRun">Pause</div>
+            <div class="btn danger" id="reset">Reset</div>
+          </div>
+          <div class="kv">
+            <span>TCP total</span><strong><span id="tcpTotal">0 ms</span></strong>
+            <span>RDMA total</span><strong><span id="rdmaTotal">0 ms</span></strong>
+            <span>CPU (TCP/RDMA)</span><strong><span id="cpu">0% / 0%</span></strong>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script src="shared.js"></script>
+<script>
+(() => {
+  const { ctx } = SimUI.setupCanvas('c');
+
+  const el = {
+    totalSize: document.getElementById('totalSize'),
+    chunkSize: document.getElementById('chunkSize'),
+    signalEvery: document.getElementById('signalEvery'),
+    speed: document.getElementById('speed'),
+    totalVal: document.getElementById('totalVal'),
+    chunkVal: document.getElementById('chunkVal'),
+    sigVal: document.getElementById('sigVal'),
+    speedVal: document.getElementById('speedVal'),
+    toggleRun: document.getElementById('toggleRun'),
+    reset: document.getElementById('reset'),
+    tcpTotal: document.getElementById('tcpTotal'),
+    rdmaTotal: document.getElementById('rdmaTotal'),
+    cpu: document.getElementById('cpu'),
+  };
+
+  const bindRange = SimUI.bindRange;
+  bindRange(el.totalSize, el.totalVal, v => v);
+  bindRange(el.chunkSize, el.chunkVal, v => v);
+  bindRange(el.signalEvery, el.sigVal, v => v);
+  bindRange(el.speed, el.speedVal, v => `${Number(v).toFixed(1)}x`);
+
+  let running = true;
+  let progress = 0;
+
+  el.toggleRun.onclick = () => {
+    running = !running;
+    el.toggleRun.textContent = running ? 'Pause' : 'Play';
+  };
+  el.reset.onclick = () => { progress = 0; };
+
+  function tick() {
+    if (running) {
+      const speed = Number(el.speed.value);
+      progress += 0.006 * speed;
+      if (progress > 1) progress = 0;
+    }
+
+    const totalKB = Number(el.totalSize.value);
+    const chunkKB = Number(el.chunkSize.value);
+    const signalEvery = Number(el.signalEvery.value);
+    const chunks = Math.max(1, Math.ceil(totalKB / chunkKB));
+
+    const tcpCopy = totalKB * 0.03; // ms per KB
+    const tcpSys = chunks * 0.8;    // ms per chunk
+    const tcpIrq = chunks * 0.6;    // ms per chunk
+    const tcpTotal = tcpCopy + tcpSys + tcpIrq;
+
+    const rdmaDma = totalKB * 0.01;
+    const rdmaSetup = 8.0;
+    const rdmaPoll = (chunks / signalEvery) * 0.4;
+    const rdmaTotal = rdmaSetup + rdmaDma + rdmaPoll;
+
+    const tcpCpu = Math.min(100, (tcpSys + tcpIrq) / (tcpTotal || 1) * 120);
+    const rdmaCpu = Math.min(100, rdmaPoll / (rdmaTotal || 1) * 80);
+
+    el.tcpTotal.textContent = `${tcpTotal.toFixed(0)} ms`;
+    el.rdmaTotal.textContent = `${rdmaTotal.toFixed(0)} ms`;
+    el.cpu.textContent = `${tcpCpu.toFixed(0)}% / ${rdmaCpu.toFixed(0)}%`;
+
+    const w = ctx.canvas.width / (window.devicePixelRatio || 1);
+    const h = ctx.canvas.height / (window.devicePixelRatio || 1);
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = '#0d1117';
+    ctx.fillRect(0, 0, w, h);
+
+    const pad = 40;
+    const laneH = 60;
+    const tcpY = 80;
+    const rdmaY = tcpY + 120;
+    const laneW = w - pad * 2;
+
+    ctx.fillStyle = '#e8eef7';
+    ctx.font = '13px system-ui, sans-serif';
+    ctx.fillText('TCP (copy + syscalls + IRQ)', pad, tcpY - 16);
+    ctx.fillText('RDMA (DMA + CQ polling)', pad, rdmaY - 16);
+
+    function drawLane(y, colors, labels, parts) {
+      let x = pad;
+      parts.forEach((p, i) => {
+        ctx.fillStyle = colors[i];
+        const wPart = laneW * p;
+        ctx.fillRect(x, y, wPart, laneH);
+        if (wPart > 40) {
+          ctx.fillStyle = '#0b0d10';
+          ctx.font = '12px system-ui, sans-serif';
+          ctx.fillText(labels[i], x + 8, y + 34);
+        }
+        x += wPart;
+      });
+      ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+      ctx.strokeRect(pad, y, laneW, laneH);
+    }
+
+    const tcpParts = [tcpCopy, tcpSys, tcpIrq].map(v => v / tcpTotal);
+    drawLane(tcpY, ['#4da3ff', '#ffb020', '#ff7b7b'], ['Copy', 'Sys', 'IRQ'], tcpParts);
+
+    const rdmaParts = [rdmaDma, rdmaPoll, rdmaSetup].map(v => v / rdmaTotal);
+    drawLane(rdmaY, ['#6ee7b7', '#4da3ff', '#475569'], ['DMA', 'Poll', 'Setup'], rdmaParts);
+
+    const tcpX = pad + laneW * progress;
+    const rdmaX = pad + laneW * (progress * 1.2 % 1);
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(tcpX, tcpY + laneH / 2, 5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(rdmaX, rdmaY + laneH / 2, 5, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = '#a7b3c5';
+    ctx.font = '12px system-ui, sans-serif';
+    ctx.fillText(`Chunks: ${chunks}, signal every ${signalEvery}`, pad, h - 40);
+
+    requestAnimationFrame(tick);
+  }
+
+  requestAnimationFrame(tick);
+})();
+</script>
+</body>
+</html>

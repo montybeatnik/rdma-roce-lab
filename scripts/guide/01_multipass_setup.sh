@@ -52,6 +52,7 @@ packages:
   - build-essential
   - python3
   - python3-pip
+  - python3-matplotlib
   - python3-venv
   - python3-pyverbs
   - pkg-config

@@ -37,6 +37,7 @@ chern    ALL=(ALL) NOPASSWD: ALL
 ## Try to get a capture
 ```bash
 ssh ubuntu@192.168.2.38 'sudo tcpdump -U -nni enp0s1 -w - not port 22' | wireshark -k -i -
+# or if you're using name resolution (the script should have updated the /etc/hosts file)
 ```
 
 ## Wireshark not found

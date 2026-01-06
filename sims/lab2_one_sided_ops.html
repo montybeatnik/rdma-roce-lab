@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Lab 2: One-Sided WRITE + READ</title>
+  <link rel="stylesheet" href="shared.css" />
+</head>
+<body>
+  <div class="wrap">
+    <h1>Lab 2: One-Sided WRITE + READ</h1>
+    <p class="sub">
+      Visualize how WRITE and READ bypass the remote CPU. The only remote work is memory exposure and CQ handling.
+    </p>
+
+    <div class="grid">
+      <div class="card">
+        <div class="canvasWrap">
+          <canvas id="c"></canvas>
+        </div>
+      </div>
+
+      <div class="card controls">
+        <div class="ctl">
+          <label><span>Message Size (KB)</span><strong><span id="sizeVal">64</span></strong></label>
+          <input id="msgSize" type="range" min="4" max="256" step="4" value="64" />
+        </div>
+
+        <div class="ctl">
+          <label><span>Signal Every (ops)</span><strong><span id="sigVal">4</span></strong></label>
+          <input id="signalEvery" type="range" min="1" max="16" step="1" value="4" />
+          <div class="note">Signaling less often reduces CQ load, but hides progress.</div>
+        </div>
+
+        <div class="ctl">
+          <label><span>Speed</span><strong><span id="speedVal">1.0x</span></strong></label>
+          <input id="speed" type="range" min="0.4" max="2.0" step="0.1" value="1.0" />
+        </div>
+
+        <div class="ctl">
+          <div class="tog">
+            <div class="btn primary" id="toggleRun">Pause</div>
+            <div class="btn danger" id="reset">Reset</div>
+          </div>
+          <div class="kv">
+            <span>Writes sent</span><strong><span id="writes">0</span></strong>
+            <span>Reads sent</span><strong><span id="reads">0</span></strong>
+            <span>CQEs</span><strong><span id="cqes">0</span></strong>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script src="shared.js"></script>
+<script>
+(() => {
+  const { ctx } = SimUI.setupCanvas('c');
+
+  const el = {
+    msgSize: document.getElementById('msgSize'),
+    signalEvery: document.getElementById('signalEvery'),
+    speed: document.getElementById('speed'),
+    sizeVal: document.getElementById('sizeVal'),
+    sigVal: document.getElementById('sigVal'),
+    speedVal: document.getElementById('speedVal'),
+    toggleRun: document.getElementById('toggleRun'),
+    reset: document.getElementById('reset'),
+    writes: document.getElementById('writes'),
+    reads: document.getElementById('reads'),
+    cqes: document.getElementById('cqes'),
+  };
+
+  const bindRange = SimUI.bindRange;
+  bindRange(el.msgSize, el.sizeVal, v => v);
+  bindRange(el.signalEvery, el.sigVal, v => v);
+  bindRange(el.speed, el.speedVal, v => `${Number(v).toFixed(1)}x`);
+
+  let running = true;
+  let ops = [];
+  let stats = { writes: 0, reads: 0, cqes: 0 };
+  let tickCount = 0;
+
+  function reset() {
+    ops = [];
+    stats = { writes: 0, reads: 0, cqes: 0 };
+    tickCount = 0;
+  }
+
+  el.reset.onclick = reset;
+  el.toggleRun.onclick = () => {
+    running = !running;
+    el.toggleRun.textContent = running ? 'Pause' : 'Play';
+  };
+
+  function enqueue(kind) {
+    ops.push({ kind, progress: 0, signaled: false });
+    if (kind === 'write') stats.writes += 1;
+    if (kind === 'read') stats.reads += 1;
+  }
+
+  function tick() {
+    if (running) {
+      const speed = Number(el.speed.value);
+      const signalEvery = Number(el.signalEvery.value);
+      tickCount += 1;
+
+      if (tickCount % 40 === 0) {
+        enqueue('write');
+      }
+      if (tickCount % 70 === 0) {
+        enqueue('read');
+      }
+
+      ops.forEach(op => {
+        op.progress += 0.018 * speed;
+      });
+
+      const completed = ops.filter(op => op.progress >= 1);
+      ops = ops.filter(op => op.progress < 1);
+
+      completed.forEach((op, idx) => {
+        const seq = stats.writes + stats.reads + idx + 1;
+        if (seq % signalEvery === 0 || op.kind === 'read') {
+          stats.cqes += 1;
+        }
+      });
+    }
+
+    const w = ctx.canvas.width / (window.devicePixelRatio || 1);
+    const h = ctx.canvas.height / (window.devicePixelRatio || 1);
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = '#0d1117';
+    ctx.fillRect(0, 0, w, h);
+
+    const leftX = 70;
+    const rightX = w - 70;
+    const midY = h / 2;
+
+    ctx.fillStyle = '#1f2937';
+    ctx.fillRect(leftX - 20, midY - 80, 140, 160);
+    ctx.fillRect(rightX - 120, midY - 80, 140, 160);
+
+    ctx.fillStyle = '#e8eef7';
+    ctx.font = '12px system-ui, sans-serif';
+    ctx.fillText('Client Buffer', leftX - 4, midY - 90);
+    ctx.fillText('Server Buffer', rightX - 118, midY - 90);
+
+    ctx.fillStyle = '#111827';
+    ctx.fillRect(leftX - 6, midY - 30, 100, 60);
+    ctx.fillRect(rightX - 106, midY - 30, 100, 60);
+
+    ctx.fillStyle = '#a7b3c5';
+    ctx.fillText('Local', leftX + 18, midY + 6);
+    ctx.fillText('Remote', rightX - 90, midY + 6);
+
+    ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+    ctx.beginPath();
+    ctx.moveTo(leftX + 100, midY - 20);
+    ctx.lineTo(rightX - 110, midY - 20);
+    ctx.moveTo(leftX + 100, midY + 20);
+    ctx.lineTo(rightX - 110, midY + 20);
+    ctx.stroke();
+
+    ops.forEach(op => {
+      const x = leftX + 100 + (rightX - leftX - 210) * op.progress;
+      const y = op.kind === 'write' ? midY - 20 : midY + 20;
+      ctx.fillStyle = op.kind === 'write' ? '#4da3ff' : '#6ee7b7';
+      ctx.fillRect(x - 5, y - 5, 10, 10);
+    });
+
+    const cqX = rightX - 110;
+    const cqY = midY + 70;
+    ctx.fillStyle = 'rgba(255,255,255,0.05)';
+    ctx.fillRect(cqX - 30, cqY, 140, 60);
+    ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+    ctx.strokeRect(cqX - 30, cqY, 140, 60);
+    ctx.fillStyle = '#e8eef7';
+    ctx.fillText('CQ', cqX + 20, cqY + 18);
+    ctx.fillStyle = '#a7b3c5';
+    ctx.fillText(`CQEs: ${stats.cqes}`, cqX - 14, cqY + 40);
+
+    el.writes.textContent = stats.writes;
+    el.reads.textContent = stats.reads;
+    el.cqes.textContent = stats.cqes;
+
+    requestAnimationFrame(tick);
+  }
+
+  reset();
+  requestAnimationFrame(tick);
+})();
+</script>
+</body>
+</html>

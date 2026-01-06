@@ -117,6 +117,11 @@ See [docs/python-status.md](docs/python-status.md) for context and how to report
 
 HTML/Canvas sims you can open directly in a browser. Start with the ones below.
 
+- `sims/lab1_minimal_flow.html` — Lab 1 walkthrough (CM/QP/MR → WRITE/READ → CQE).
+- `sims/lab2_one_sided_ops.html` — Lab 2 one-sided ops and CQ signaling.
+- `sims/lab3_write_with_imm.html` — Lab 3 notification path with imm_data.
+- `sims/lab4_rdma_vs_tcp.html` — Lab 4 bulk transfer cost comparison.
+- `sims/lab5_ai_ml_mapping.html` — Lab 5 AI/ML pattern mapping.
 - `sims/average_vs_spikes.html` — why averages hide microbursts.
 - `sims/microburst_queue_sim.html` — fan-in bursts filling a queue.
 - `sims/amplification_feedback_loop.html` — how small delays compound into runaway.
@@ -158,7 +163,7 @@ See [sims/README.md](sims/README.md) for the full list and mechanics guide.
 - **What you’ll learn:** where RDMA saves cycles and where it can still stall.
 - **Try (inside each VM):** build and run the RDMA and TCP bulk examples on separate VMs.
   - RDMA server VM: `./rdma_bulk_server 7471 256K`
-  - RDMA client VM: `./rdma_bulk_client <SERVER_IP> 7471 256K 64K`
+  - RDMA client VM (report): `scripts/guide/11_rdma_bulk_report.sh <SERVER_IP> 7471 256K 64K`
   - TCP server VM: `./tcp_server 9000 256K`
   - TCP client VM: `./tcp_client <SERVER_IP> 9000 256K`
 - **Observe:** chunking, signaling, throughput vs CPU cost.
@@ -176,6 +181,22 @@ See [sims/README.md](sims/README.md) for the full list and mechanics guide.
 - **What you’ll learn:** device + port introspection before you build QPs.
 - **Try:** `examples/py/README.md` (may fail depending on your distro/rdma-core).
 - **Observe:** limits, port state, device capabilities.
+
+### Lab 7: Loss + reordering with tc/netem
+
+- **What you’ll learn:** how loss/reordering amplify retransmits (Go-Back-N style) and hurt goodput.
+- **Try (inside a VM):** apply netem to the client interface, then run Lab 4.
+  - Apply: `LOSS=1% DELAY=40ms JITTER=5ms scripts/guide/09_netem_apply.sh`
+  - Clear: `scripts/guide/10_netem_clear.sh`
+- **Observe:** retransmit amplification and stalled progress in `sims/loss_amplification_go_back_n.html`.
+- To see dropped packets run: `tc -s qdisc show dev enp0s1`
+```bash
+ubuntu@rdma-client:~/rdma-roce-lab$ tc -s qdisc show dev enp0s1
+qdisc netem 8001: root refcnt 2 limit 1000 delay 40ms  5ms loss 1%
+ Sent 33616640 bytes 40759 pkt (dropped 387, overlimits 0 requeues 0) 
+ backlog 66b 1p requeues 0
+```
+- Look at errors in the wireshark capture with the following display filter: `infiniband.aeth.syndrome.error_code == 0`
 
 ## Docs index
 
