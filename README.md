@@ -122,6 +122,7 @@ HTML/Canvas sims you can open directly in a browser. Start with the ones below.
 - `sims/lab3_write_with_imm.html` — Lab 3 notification path with imm_data.
 - `sims/lab4_rdma_vs_tcp.html` — Lab 4 bulk transfer cost comparison.
 - `sims/lab5_ai_ml_mapping.html` — Lab 5 AI/ML pattern mapping.
+- `sims/qp_state_machine.html` — QP state machine and CM vs data path flow.
 - `sims/average_vs_spikes.html` — why averages hide microbursts.
 - `sims/microburst_queue_sim.html` — fan-in bursts filling a queue.
 - `sims/amplification_feedback_loop.html` — how small delays compound into runaway.
@@ -176,13 +177,7 @@ See [sims/README.md](sims/README.md) for the full list and mechanics guide.
   - Client VM: `./scripts/guide/04_run_client_write_read.sh <SERVER_IP> 7471`
 - **Observe:** which constraints show up as “pipeline inefficiency.”
 
-### Lab 6: Python introspection (Experimental / optional)
-
-- **What you’ll learn:** device + port introspection before you build QPs.
-- **Try:** `examples/py/README.md` (may fail depending on your distro/rdma-core).
-- **Observe:** limits, port state, device capabilities.
-
-### Lab 7: Loss + reordering with tc/netem
+### Lab 6: Loss + reordering with tc/netem
 
 - **What you’ll learn:** how loss/reordering amplify retransmits (Go-Back-N style) and hurt goodput.
 - **Try (inside a VM):** apply netem to the client interface, then run Lab 4.
@@ -197,6 +192,20 @@ qdisc netem 8001: root refcnt 2 limit 1000 delay 40ms  5ms loss 1%
  backlog 66b 1p requeues 0
 ```
 - Look at errors in the wireshark capture with the following display filter: `infiniband.aeth.syndrome.error_code == 0`
+
+### Lab 7: MR cache (user‑mode registration)
+
+- **What you’ll learn:** how caching MRs by size avoids repeated `ibv_reg_mr` overhead.
+- **Try (inside each VM):** run the MR cache server/client pair.
+  - Server VM: `./mr_cache_server 7473`
+  - Client VM: `./mr_cache_client <SERVER_IP> 7473 40`
+- **Observe:** cache hit/miss counts and how reuse grows with repeated sizes.
+
+### Lab 8: Python introspection (Experimental / optional)
+
+- **What you’ll learn:** device + port introspection before you build QPs.
+- **Try:** `examples/py/README.md` (may fail depending on your distro/rdma-core).
+- **Observe:** limits, port state, device capabilities.
 
 ## Docs index
 

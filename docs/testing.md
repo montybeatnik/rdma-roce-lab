@@ -34,5 +34,5 @@ make py-tests
 ```
 
 ## Navigation
-- Previous: [AI/ML use cases](ai-ml-use-cases.md)
+- Previous: [Lab 8 MR cache](lab-8-mr-cache.md)
 - Next: [Blog post ideas](blog-post-ideas.md)

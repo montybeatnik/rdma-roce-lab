@@ -67,4 +67,4 @@ scripts/guide/10_netem_clear.sh
 ## Navigation
 
 - Previous: [AI/ML use cases](ai-ml-use-cases.md)
-- Next: [Testing](testing.md)
+- Next: [Lab 8 MR cache](lab-8-mr-cache.md)

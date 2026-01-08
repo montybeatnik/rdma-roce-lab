@@ -5,11 +5,16 @@ This folder holds the deeper explanations and reference material for the lab.
 ## Index
 - docs/architecture.md - module boundaries, data flow, and connection lifecycle.
 - docs/lab-setup.md - local lab setup steps (Multipass + SoftRoCE).
+- docs/prereqs.md - kernel and RDMA prerequisites, known-good platform checks.
 - docs/guide-scripts.md - what each guided script does and why it exists.
+- docs/qp-state-walkthrough.md - QP state lifecycle walkthrough with capture slots.
 - docs/tuning.md - performance knobs and their tradeoffs.
+- docs/on-the-wire.md - packet capture notes for the lab flows.
+- docs/troubleshooting.md - symptom to root-cause matrix for common failures.
 - docs/verbs-choices.md - which verbs map to which workloads.
 - docs/ai-ml-use-cases.md - practical AI/ML scenarios and how RDMA/RoCE fits.
 - docs/lab-7-netem.md - inject loss/latency/reordering with tc/netem.
+- docs/lab-8-mr-cache.md - MR cache (user‑mode registration) walkthrough.
 - docs/testing.md - unit and integration test guidance.
 - docs/blog-post-ideas.md - blog outline ideas for sharing what you learn.
 - docs/tutorial-narrative.md - narrative walkthrough tying setup and code to real-world use.

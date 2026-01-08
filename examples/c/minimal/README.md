@@ -136,6 +136,7 @@ Use this as a narrated flow. Run tcpdump/Wireshark before starting the client so
    ![disconnect](../../../docs/images/disconnect.png)
 
 Capture tips: see `docs/on-the-wire.md` for tcpdump/Wireshark commands and filters.
+QP lifecycle walkthrough: see `docs/qp-state-walkthrough.md` for step-by-step state progression.
 
 ## Where to look in code
 - Server: `examples/c/minimal/server_min.c`

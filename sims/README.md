@@ -13,6 +13,9 @@ See `MECHANICS.md` for the mechanics-focused sequence:
 
 Open: [MECHANICS.md](MECHANICS.md)
 
+Key mechanics sim:
+- `qp_state_machine.html` — QP states and CM vs data path flow.
+
 ## Learning order (start here)
 
 0) Lab-focused sims:

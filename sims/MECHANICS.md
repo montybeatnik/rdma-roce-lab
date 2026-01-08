@@ -15,6 +15,9 @@ Key ideas:
 Visual anchor:
 - Think of the QP as a lock that only accepts work requests once the handshake is complete.
 
+Sim:
+- `qp_state_machine.html`
+
 ## 2) Verbs pipeline (objects and flow)
 
 **Goal:** Know which objects are created and in which order for a minimal RC connection.

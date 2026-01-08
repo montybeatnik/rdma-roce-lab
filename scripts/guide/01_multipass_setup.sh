@@ -64,6 +64,7 @@ packages:
   - perftest
   - net-tools
   - tcpdump
+  - ripgrep
 
 write_files:
   - path: /usr/local/bin/setup_rxe.sh

@@ -15,7 +15,7 @@ BIN_DIR=.
 SRCS=$(SRC_DIR)/common.c $(SRC_DIR)/rdma_cm_helpers.c $(SRC_DIR)/rdma_builders.c $(SRC_DIR)/rdma_mem.c $(SRC_DIR)/rdma_ops.c
 HDRS=$(SRC_DIR)/common.h $(SRC_DIR)/rdma_ctx.h $(SRC_DIR)/rdma_cm_helpers.h $(SRC_DIR)/rdma_builders.h $(SRC_DIR)/rdma_mem.h $(SRC_DIR)/rdma_ops.h
 
-all: rdma_server rdma_client rdma_server_imm rdma_client_imm minimal rdma_bulk_server rdma_bulk_client tcp_server tcp_client
+all: rdma_server rdma_client rdma_server_imm rdma_client_imm minimal rdma_bulk_server rdma_bulk_client tcp_server tcp_client mr_cache
 
 rdma_server: $(SRCS) $(SRC_DIR)/server_main.c $(HDRS)
 	$(CC) $(CFLAGS) -I$(SRC_DIR) $(SRCS) $(SRC_DIR)/server_main.c -o $@ $(LDFLAGS)
@@ -57,9 +57,17 @@ minimal_client: $(SRCS) examples/c/minimal/client_min.c $(HDRS)
 
 minimal: minimal_server minimal_client
 
+mr_cache_server: $(SRCS) examples/c/mr-cache/server_mr_cache.c $(HDRS)
+	$(CC) $(CFLAGS) -I$(SRC_DIR) $(SRCS) examples/c/mr-cache/server_mr_cache.c -o $@ $(LDFLAGS)
+
+mr_cache_client: $(SRCS) examples/c/mr-cache/client_mr_cache.c $(HDRS)
+	$(CC) $(CFLAGS) -I$(SRC_DIR) $(SRCS) examples/c/mr-cache/client_mr_cache.c -o $@ $(LDFLAGS)
+
+mr_cache: mr_cache_server mr_cache_client
+
 clean:
 	rm -f rdma_server rdma_client rdma_server_imm rdma_client_imm rdma_min_server rdma_min_client \
-		rdma_bulk_server rdma_bulk_client tcp_server tcp_client
+		rdma_bulk_server rdma_bulk_client tcp_server tcp_client mr_cache_server mr_cache_client
 
 # ---- Tests ----
 TESTS_DIR=tests
@@ -184,5 +192,6 @@ py-minimal-client:
 	$(PYTHON) examples/py/11_minimal_client.py $(PY_SERVER_IP) $(PY_CM_PORT)
 
 .PHONY: tests test minimal minimal_server minimal_client rdma_bulk_server rdma_bulk_client tcp_server tcp_client \
+	mr_cache mr_cache_server mr_cache_client \
 	perf-compare lab-capture lab-capture-live lab-capture-manual lab-capture-live-manual lab-deploy lab-clean \
 	py-list-devices py-query-ports py-minimal-server py-minimal-client py-tests

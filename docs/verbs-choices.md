@@ -57,6 +57,12 @@ When a loss occurs:
 
 This is why small loss rates can create **large retransmit bursts**.
 
+### Out-of-order delivery (RC expectations)
+RC assumes in-order delivery. If packets arrive out of order, the receiver will
+request retransmit starting at the first missing PSN. This can turn a single
+late packet into a large resend burst, which looks like congestion even when
+only one packet was delayed.
+
 ### RNR (Receiver Not Ready)
 If the receiver has no posted RECV buffers:
 - RC will signal **RNR NAK**
