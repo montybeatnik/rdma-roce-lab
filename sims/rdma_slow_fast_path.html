@@ -221,6 +221,14 @@
     ctx.fillStyle = '#a7b3c5';
     ctx.fillText(`Msg ${idx} of ${count}`, pad, h - pad + 28);
 
+    ctx.fillStyle = '#8fa0b8';
+    ctx.fillText('X: message index', w - pad - 130, h - pad + 28);
+    ctx.save();
+    ctx.translate(pad - 34, pad + chartH / 2);
+    ctx.rotate(-Math.PI / 2);
+    ctx.fillText('Y: cumulative time (ms)', 0, 0);
+    ctx.restore();
+
     requestAnimationFrame(tick);
   }
 
